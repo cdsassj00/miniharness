@@ -1,0 +1,6 @@
+# Mini Harness 실행에 필요한 패키지
+# (런타임 외부 의존성은 GUI 한 개로 최소화했습니다. HTTP 호출은 표준 라이브러리 urllib 사용)
+PySide6>=6.6.0
+
+# 빌드(선택): exe 생성용
+# pyinstaller>=6.0

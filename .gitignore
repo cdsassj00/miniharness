@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# PyInstaller 산출물
+/build/
+/dist/
+*.spec.bak
+
+# 로컬 설정 / 로그 (API Key 유출 방지)
+config.json
+sessions/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

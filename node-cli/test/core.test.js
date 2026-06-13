@@ -66,6 +66,14 @@ test("정규화된 응답에 usage/latency/request 메타가 있다", async () =
   assert.strictEqual(reply.request.provider, "mock");
 });
 
+test("스트리밍: onToken 으로 받은 조각의 합 = 최종 content", async () => {
+  const client = new LLMClient({ provider: "mock", apiKey: "", model: "mock-agent" });
+  let acc = "";
+  const reply = await client.chat([{ role: "user", content: "안녕" }], [], (ch) => { acc += ch; });
+  assert.strictEqual(acc, reply.content);
+  assert.ok(acc.length > 0);
+});
+
 test("Anthropic 변환: system 분리 + tool_use/tool_result 매핑", () => {
   const messages = [
     { role: "system", content: "규칙" },

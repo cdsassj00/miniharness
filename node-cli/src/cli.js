@@ -46,15 +46,24 @@ function clip(s, n) {
 }
 
 // cfg.teach_mode 를 실행 중 토글할 수 있으므로 closure 로 cfg 를 잡아둔다.
-function makePrinter(cfg) {
+// stream.active 는 onToken 과 공유하는 스트리밍 상태.
+function makePrinter(cfg, stream) {
   return (ev) => {
-    if (cfg.teach_mode) return printTeach(ev);
-    return printCompact(ev);
+    if (cfg.teach_mode) return printTeach(ev, stream);
+    return printCompact(ev, stream);
   };
 }
 
+function replyMetaLine(d) {
+  const meta = [];
+  if (d.latencyMs != null) meta.push(`응답 ${d.latencyMs}ms`);
+  if (d.usage) meta.push(`토큰 입력 ${d.usage.input ?? "?"}/출력 ${d.usage.output ?? "?"}/합계 ${d.usage.total ?? "?"}`);
+  if (d.request?.bodyBytes) meta.push(`요청 ${d.request.bodyBytes}B`);
+  return meta.length ? meta.join(" · ") : "";
+}
+
 // ---- 교육(teach) 렌더: 내부 과정을 패널로 펼쳐 보여준다 ----
-function printTeach(ev) {
+function printTeach(ev, stream) {
   const d = ev.data || {};
   switch (ev.step) {
     case Step.USER_INPUT:
@@ -85,16 +94,26 @@ function printTeach(ev) {
     }
 
     case Step.MODEL_REPLY: {
+      // 스트리밍으로 이미 본문이 출력된 경우: 줄바꿈 후 메타/도구호출만 덧붙인다.
+      if (d.streamed) {
+        if (stream && stream.active) {
+          process.stdout.write("\n");
+          stream.active = false;
+        }
+        for (const tc of d.toolCalls || []) {
+          console.log(c.yellow(`  ↳ 도구 호출 요청: ${c.bold(tc.name)}(${clip(JSON.stringify(tc.args), 200)})`));
+        }
+        const meta = replyMetaLine(d);
+        if (meta) console.log(c.grey("  ─ " + meta));
+        return;
+      }
       const lines = [];
       if (ev.detail && ev.detail !== "(텍스트 없음)") lines.push(...clip(ev.detail, 1200).split("\n"));
       for (const tc of d.toolCalls || []) {
         lines.push(c.yellow(`↳ 도구 호출 요청: ${c.bold(tc.name)}(${clip(JSON.stringify(tc.args), 200)})`));
       }
-      const meta = [];
-      if (d.latencyMs != null) meta.push(`응답 ${d.latencyMs}ms`);
-      if (d.usage) meta.push(`토큰 입력 ${d.usage.input ?? "?"}/출력 ${d.usage.output ?? "?"}/합계 ${d.usage.total ?? "?"}`);
-      if (d.request?.bodyBytes) meta.push(`요청 ${d.request.bodyBytes}B`);
-      if (meta.length) lines.push(c.grey("─ " + meta.join(" · ")));
+      const meta = replyMetaLine(d);
+      if (meta) lines.push(c.grey("─ " + meta));
       else lines.push(c.dim("(mock: 토큰/지연 측정 없음)"));
       console.log(panel(lines.length ? lines : ["(빈 응답)"], { title: "🤖 ③ 모델 응답 (원본 판단)", color: "green" }));
       return;
@@ -132,11 +151,17 @@ function printTeach(ev) {
 }
 
 // ---- 간결(compact) 렌더: 한 줄 위주 ----
-function printCompact(ev) {
+function printCompact(ev, stream) {
   const [icon, color] = STEP_STYLE[ev.step] || ["•", "cyan"];
   const paint = c[color] || ((x) => x);
   if (ev.step === Step.APPROVAL && !ev.title.includes("자동 승인")) return;
   if (ev.step === Step.MODEL_REPLY) {
+    const d = ev.data || {};
+    if (d.streamed) {
+      if (stream && stream.active) { process.stdout.write("\n"); stream.active = false; }
+      for (const tc of d.toolCalls || []) console.log(c.yellow(`  ↳ ${tc.name}(${clip(JSON.stringify(tc.args), 120)})`));
+      return;
+    }
     if (ev.detail && ev.detail !== "(텍스트 없음)") console.log(panel(ev.detail.split("\n"), { title: "🤖 모델", color: "green" }));
     return;
   }
@@ -189,6 +214,7 @@ function printIntro(cfg) {
     ["model", cfg.model],
     ["API 키", keySource],
     ["교육 모드", cfg.teach_mode ? c.green("ON (과정 펼쳐보기)") : "OFF"],
+    ["스트리밍", cfg.stream ? c.green("ON (실시간)") : "OFF"],
     ["작업 폴더", cfg.workspacePath()],
     ["승인 모드", cfg.approval_mode],
     ["셸 실행", cfg.allow_shell ? "허용" : "차단"],
@@ -213,6 +239,7 @@ function printHelp() {
         `  ${c.cyan("/provider")} <openai|anthropic|openrouter|mock> 제공자 변경`,
         `  ${c.cyan("/model")} <이름>   모델 변경`,
         `  ${c.cyan("/teach")}    교육 모드 켜기/끄기(내부 과정 펼쳐보기)`,
+        `  ${c.cyan("/stream")}   실시간 스트리밍 출력 켜기/끄기`,
         `  ${c.cyan("/context")}  지금 모델에 보내는 컨텍스트 들여다보기`,
         `  ${c.cyan("/skills")}   스킬 목록(.cdsa/skills 의 /명령들)`,
         `  ${c.cyan("/plugins")}  플러그인 목록(파일·npm 추가 도구)`,
@@ -304,6 +331,7 @@ function parseArgs(argv) {
     else if (a === "--help" || a === "-h") out.help = true;
     else if (a === "--setup") out.setup = true;
     else if (a === "--no-teach") out.noTeach = true;
+    else if (a === "--no-stream") out.noStream = true;
     else if (a === "--provider") out.provider = argv[++i];
     else if (a === "--model") out.model = argv[++i];
     else if (a === "--workspace") out.workspace = argv[++i];
@@ -324,6 +352,7 @@ export async function main(argv = []) {
         "  --workspace <폴더경로>\n" +
         "  --setup                대화형 연결 설정 실행\n" +
         "  --no-teach             교육 모드 끄고 간결하게\n" +
+        "  --no-stream            실시간 스트리밍 끄기\n" +
         "  --auto                 승인 자동(approval_mode=auto)\n" +
         "  -h, --help             도움말\n\n" +
         "API 키는 환경변수로도 인식됩니다: OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY\n"
@@ -355,6 +384,7 @@ export async function main(argv = []) {
   if (args.workspace) cfg.workspace = args.workspace;
   if (args.auto) cfg.approval_mode = "auto";
   if (args.noTeach) cfg.teach_mode = false;
+  if (args.noStream) cfg.stream = false;
 
   const rl = readline.createInterface({ input: stdin, output: stdout });
   let session = null;
@@ -418,13 +448,23 @@ export async function main(argv = []) {
   }
 
   session = SessionLog.create();
+  // 스트리밍: 토큰이 도착하는 대로 실시간 출력(첫 토큰에 헤더 1회).
+  const stream = { active: false };
+  const onToken = (chunk) => {
+    if (!stream.active) {
+      process.stdout.write("\n" + c.green("🤖 ③ 모델 응답 (스트리밍)") + "\n");
+      stream.active = true;
+    }
+    process.stdout.write(c.green(chunk));
+  };
   const loop = new AgentLoop({
     config: cfg,
     client: makeClient(cfg),
     toolbox,
-    onEvent: makePrinter(cfg),
+    onEvent: makePrinter(cfg, stream),
     approvalCallback: makeApproval(ask),
     session,
+    onToken,
   });
   loop.reset();
 
@@ -445,6 +485,11 @@ export async function main(argv = []) {
     if (low === "/teach") {
       cfg.teach_mode = !cfg.teach_mode;
       console.log(c.green(`교육 모드 ${cfg.teach_mode ? "ON" : "OFF"}.`));
+      continue;
+    }
+    if (low === "/stream") {
+      cfg.stream = !cfg.stream;
+      console.log(c.green(`스트리밍 ${cfg.stream ? "ON (실시간 출력)" : "OFF"}.`));
       continue;
     }
     if (low === "/setup" || low === "/login") {

@@ -79,13 +79,14 @@ function findRules(workspace) {
 }
 
 export class AgentLoop {
-  constructor({ config, client, toolbox, onEvent, approvalCallback, session = null }) {
+  constructor({ config, client, toolbox, onEvent, approvalCallback, session = null, onToken = null }) {
     this.config = config;
     this.client = client;
     this.toolbox = toolbox;
     this.onEvent = onEvent;
     this.approvalCallback = approvalCallback;
     this.session = session;
+    this.onToken = onToken; // 스트리밍 토큰 콜백(있으면 실시간 출력)
     this.messages = [];
   }
 
@@ -168,9 +169,10 @@ export class AgentLoop {
         }
       );
 
+      const streaming = Boolean(this.onToken && this.config.stream);
       let reply;
       try {
-        reply = await this.client.chat(this.messages, tools);
+        reply = await this.client.chat(this.messages, tools, streaming ? this.onToken : null);
       } catch (e) {
         if (e instanceof LLMError) {
           this._emit(Step.ERROR, "LLM 오류", e.message);
@@ -180,11 +182,13 @@ export class AgentLoop {
       }
 
       // ③ 모델의 원본 판단 + 실측 메타(응답시간/토큰/요청크기)를 드러낸다.
+      // streamed=true 면 텍스트는 이미 실시간 출력됨 → UI 는 메타만 덧붙인다.
       this._emit(Step.MODEL_REPLY, "모델 응답", reply.content || "(텍스트 없음)", {
         toolCalls: reply.toolCalls.map((tc) => ({ name: tc.name, args: tc.args })),
         usage: reply.usage || null,
         latencyMs: reply.latencyMs ?? null,
         request: reply.request || null,
+        streamed: streaming && Boolean(reply.content),
       });
       if (reply.content) finalText = reply.content;
 

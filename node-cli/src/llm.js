@@ -23,11 +23,41 @@ export class LLMClient {
     this.timeout = timeout;
   }
 
-  async chat(messages, tools) {
-    if (this.provider === "mock") return mockChat(messages);
-    if (this.provider === "anthropic") return this._anthropicChat(messages, tools);
-    if (ENDPOINTS[this.provider]) return this._openaiChat(messages, tools);
+  // onToken(chunk) 를 주면 텍스트가 도착하는 대로 콜백한다(스트리밍).
+  async chat(messages, tools, onToken = null) {
+    if (this.provider === "mock") {
+      const r = mockChat(messages);
+      if (onToken && r.content) await streamText(r.content, onToken);
+      return r;
+    }
+    if (this.provider === "anthropic") {
+      return onToken ? this._anthropicStream(messages, tools, onToken) : this._anthropicChat(messages, tools);
+    }
+    if (ENDPOINTS[this.provider]) {
+      return onToken ? this._openaiStream(messages, tools, onToken) : this._openaiChat(messages, tools);
+    }
     throw new LLMError(`지원하지 않는 provider 입니다: ${this.provider}`);
+  }
+
+  // 스트리밍용: 응답 객체(본문 스트림)를 그대로 받는다.
+  async _openStream(url, headers, body) {
+    const json = JSON.stringify(body);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), this.timeout);
+    const started = Date.now();
+    let res;
+    try {
+      res = await fetch(url, { method: "POST", headers, body: json, signal: ctrl.signal });
+    } catch (e) {
+      clearTimeout(timer);
+      throw new LLMError(`네트워크 오류: ${e.message}`);
+    }
+    if (!res.ok) {
+      clearTimeout(timer);
+      const text = await res.text().catch(() => "");
+      throw new LLMError(httpErrorMessage(res.status, text || res.statusText));
+    }
+    return { res, started, timer, bodyBytes: Buffer.byteLength(json, "utf8") };
   }
 
   async _post(url, headers, body) {
@@ -46,16 +76,7 @@ export class LLMClient {
     const latencyMs = Date.now() - started;
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      let msg = `API 오류 ${res.status}: ${trim(text) || res.statusText}`;
-      if (res.status === 404) {
-        msg += "\n  ↳ 모델 이름을 확인하세요. /model 로 변경 가능. " +
-          "OpenRouter 는 'provider/model' 형식이어야 합니다 (예: openai/gpt-4o-mini, anthropic/claude-3.7-sonnet).";
-      } else if (res.status === 401 || res.status === 403) {
-        msg += "\n  ↳ API 키가 잘못되었거나 권한이 없어요. /setup 으로 다시 연결하세요.";
-      } else if (res.status === 429) {
-        msg += "\n  ↳ 요청이 너무 많거나 크레딧이 부족할 수 있어요(잠시 후 재시도).";
-      }
-      throw new LLMError(msg);
+      throw new LLMError(httpErrorMessage(res.status, text || res.statusText));
     }
     return { payload: await res.json(), latencyMs, bodyBytes: Buffer.byteLength(json, "utf8") };
   }
@@ -103,6 +124,87 @@ export class LLMClient {
     };
   }
 
+  // --- OpenAI/OpenRouter 스트리밍 ---
+  async _openaiStream(messages, tools, onToken) {
+    const url = ENDPOINTS[this.provider];
+    const body = { model: this.model, messages, temperature: this.temperature, stream: true, stream_options: { include_usage: true } };
+    if (tools && tools.length) {
+      body.tools = tools;
+      body.tool_choice = "auto";
+    }
+    const headers = { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" };
+    if (this.provider === "openrouter") {
+      headers["HTTP-Referer"] = "https://github.com/cdsassj00/miniharness";
+      headers["X-Title"] = "CDSA Harness";
+    }
+    const { res, started, timer, bodyBytes } = await this._openStream(url, headers, body);
+    let content = "";
+    const tcMap = new Map(); // index -> {id,name,args}
+    let usage = null;
+    try {
+      await readSSE(res, (data) => {
+        if (data === "[DONE]") return;
+        let json;
+        try { json = JSON.parse(data); } catch { return; }
+        if (json.usage) usage = { input: json.usage.prompt_tokens ?? null, output: json.usage.completion_tokens ?? null, total: json.usage.total_tokens ?? null };
+        const delta = json.choices?.[0]?.delta;
+        if (!delta) return;
+        if (delta.content) { content += delta.content; onToken(delta.content); }
+        for (const tc of delta.tool_calls || []) {
+          const i = tc.index ?? 0;
+          const cur = tcMap.get(i) || { id: tc.id || `call_${i}`, name: "", args: "" };
+          if (tc.id) cur.id = tc.id;
+          if (tc.function?.name) cur.name += tc.function.name;
+          if (tc.function?.arguments) cur.args += tc.function.arguments;
+          tcMap.set(i, cur);
+        }
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const toolCalls = [...tcMap.values()].map((t) => ({ id: t.id, name: t.name, args: safeParse(t.args) }));
+    return { content: content || null, toolCalls, usage, latencyMs: Date.now() - started, request: this._meta(url, tools, bodyBytes) };
+  }
+
+  // --- Anthropic 스트리밍 ---
+  async _anthropicStream(messages, tools, onToken) {
+    const url = ENDPOINTS.anthropic;
+    const body = toAnthropicBody(messages, tools, this.model, this.temperature, this.maxTokens);
+    body.stream = true;
+    const headers = { "x-api-key": this.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" };
+    const { res, started, timer, bodyBytes } = await this._openStream(url, headers, body);
+    let content = "";
+    const blocks = new Map(); // index -> {type,name,id,json}
+    let usage = { input: null, output: null, total: 0 };
+    try {
+      await readSSE(res, (data) => {
+        let ev;
+        try { ev = JSON.parse(data); } catch { return; }
+        if (ev.type === "message_start" && ev.message?.usage) usage.input = ev.message.usage.input_tokens ?? null;
+        else if (ev.type === "content_block_start") {
+          const b = ev.content_block || {};
+          blocks.set(ev.index, { type: b.type, name: b.name, id: b.id, json: "" });
+        } else if (ev.type === "content_block_delta") {
+          const d = ev.delta || {};
+          if (d.type === "text_delta") { content += d.text; onToken(d.text); }
+          else if (d.type === "input_json_delta") {
+            const cur = blocks.get(ev.index);
+            if (cur) cur.json += d.partial_json || "";
+          }
+        } else if (ev.type === "message_delta" && ev.usage) {
+          usage.output = ev.usage.output_tokens ?? usage.output;
+        }
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    usage.total = (usage.input || 0) + (usage.output || 0);
+    const toolCalls = [...blocks.values()]
+      .filter((b) => b.type === "tool_use")
+      .map((b) => ({ id: b.id, name: b.name, args: safeParse(b.json) }));
+    return { content: content || null, toolCalls, usage, latencyMs: Date.now() - started, request: this._meta(url, tools, bodyBytes) };
+  }
+
   _meta(endpoint, tools, bodyBytes) {
     return {
       provider: this.provider,
@@ -118,6 +220,51 @@ export class LLMClient {
 function trim(s) {
   s = String(s || "");
   return s.length > 400 ? s.slice(0, 400) + " …" : s;
+}
+
+function safeParse(jsonStr) {
+  try {
+    return JSON.parse(jsonStr || "{}");
+  } catch {
+    return { _raw: jsonStr };
+  }
+}
+
+function httpErrorMessage(status, text) {
+  let msg = `API 오류 ${status}: ${trim(text)}`;
+  if (status === 404) {
+    msg += "\n  ↳ 모델 이름을 확인하세요. /model 로 변경 가능. " +
+      "OpenRouter 는 'provider/model' 형식이어야 합니다 (예: openai/gpt-4o-mini, anthropic/claude-3.7-sonnet).";
+  } else if (status === 401 || status === 403) {
+    msg += "\n  ↳ API 키가 잘못되었거나 권한이 없어요. /setup 으로 다시 연결하세요.";
+  } else if (status === 429) {
+    msg += "\n  ↳ 요청이 너무 많거나 크레딧이 부족할 수 있어요(잠시 후 재시도).";
+  }
+  return msg;
+}
+
+// SSE(data: ...) 본문 스트림을 줄 단위로 콜백. onEvent(dataString) 호출(‘[DONE]’ 포함).
+async function readSSE(res, onEvent) {
+  let buf = "";
+  for await (const chunk of res.body) {
+    buf += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (line.startsWith("data:")) onEvent(line.slice(5).trim());
+    }
+  }
+  if (buf.trim().startsWith("data:")) onEvent(buf.trim().slice(5).trim());
+}
+
+// mock/공통: 텍스트를 토큰처럼 쪼개 콜백(TTY 면 살짝 지연해 흐르는 효과).
+async function streamText(text, onToken) {
+  const parts = String(text).match(/\S+\s*|\s+/g) || [String(text)];
+  for (const p of parts) {
+    onToken(p);
+    if (process.stdout.isTTY) await new Promise((r) => setTimeout(r, 10));
+  }
 }
 
 function parseOpenAiReply(payload) {

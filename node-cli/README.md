@@ -9,6 +9,7 @@
 ```
 
 - **의존성 0개** — Node 18+ 내장 기능만(`fetch`/`readline`/`node:test`)
+- **실시간 스트리밍** — 모델 응답이 토큰 단위로 흐름(`/stream` 토글, OpenAI·Claude·mock)
 - **실제 LLM 연결** — OpenAI · Anthropic(Claude) · OpenRouter, 또는 키 없이 `mock`
 - **교육 모드** — 매 반복마다 모델에 보내는 메시지 구성·추정 토큰·시스템 프롬프트, 실제 토큰 사용량/응답시간까지 그대로 표시
 - **MCP 클라이언트** — Claude Code·Cursor 등과 **공용 표준**. MCP 서버를 그대로 붙여 도구로 사용
@@ -53,6 +54,7 @@ export OPENROUTER_API_KEY=sk-or-...
 | `/provider <이름>` | openai · anthropic · openrouter · mock 전환 |
 | `/model <이름>` | 모델 변경 |
 | `/teach` | 교육 모드 켜기/끄기 |
+| `/stream` | 실시간 스트리밍 출력 켜기/끄기 |
 | `/context` | 지금 모델에 보내는 컨텍스트 들여다보기 |
 | `/reset` | 대화/컨텍스트 초기화 |
 | `/config` | 현재 설정값 |

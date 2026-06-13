@@ -9,10 +9,11 @@ export const PROVIDERS = ["openai", "anthropic", "openrouter", "mock"];
 export const SUGGESTED_MODELS = {
   openai: ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1"],
   anthropic: ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest", "claude-sonnet-4-5"],
+  // OpenRouter 는 반드시 'provider/model' 형식. (옛 anthropic/claude-3.5-sonnet 등은 404 가능)
   openrouter: [
     "openai/gpt-4o-mini",
-    "anthropic/claude-3.5-sonnet",
-    "google/gemini-2.5-flash",
+    "anthropic/claude-3.7-sonnet",
+    "google/gemini-2.0-flash-001",
   ],
   mock: ["mock-agent"],
 };

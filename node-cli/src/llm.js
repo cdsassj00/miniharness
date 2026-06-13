@@ -46,7 +46,16 @@ export class LLMClient {
     const latencyMs = Date.now() - started;
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new LLMError(`API 오류 ${res.status}: ${trim(text) || res.statusText}`);
+      let msg = `API 오류 ${res.status}: ${trim(text) || res.statusText}`;
+      if (res.status === 404) {
+        msg += "\n  ↳ 모델 이름을 확인하세요. /model 로 변경 가능. " +
+          "OpenRouter 는 'provider/model' 형식이어야 합니다 (예: openai/gpt-4o-mini, anthropic/claude-3.7-sonnet).";
+      } else if (res.status === 401 || res.status === 403) {
+        msg += "\n  ↳ API 키가 잘못되었거나 권한이 없어요. /setup 으로 다시 연결하세요.";
+      } else if (res.status === 429) {
+        msg += "\n  ↳ 요청이 너무 많거나 크레딧이 부족할 수 있어요(잠시 후 재시도).";
+      }
+      throw new LLMError(msg);
     }
     return { payload: await res.json(), latencyMs, bodyBytes: Buffer.byteLength(json, "utf8") };
   }

@@ -149,7 +149,7 @@ function printCompact(ev) {
   console.log(line);
 }
 
-function makeApproval(rl) {
+function makeApproval(ask) {
   return async (req) => {
     if (req.toolName === "write_file") {
       console.log(panel(renderDiff(req.diff || "(변경 미리보기 없음)"), {
@@ -161,12 +161,8 @@ function makeApproval(rl) {
     } else {
       console.log(panel([JSON.stringify(req.args)], { title: `🔐 ${req.toolLabel}`, color: "yellow" }));
     }
-    let ans = "";
-    try {
-      ans = (await rl.question(c.yellow("이 작업을 승인하시겠습니까? [y/N] "))).trim().toLowerCase();
-    } catch {
-      ans = "";
-    }
+    const raw = await ask(c.yellow("이 작업을 승인하시겠습니까? [y/N] "));
+    const ans = (raw || "").trim().toLowerCase();
     const approved = ans === "y" || ans === "yes";
     return { approved, reason: approved ? "" : "사용자가 거부했습니다." };
   };
@@ -234,8 +230,14 @@ function printHelp() {
   );
 }
 
+// 붙여넣기한 키에 섞이기 쉬운 따옴표/공백/줄바꿈을 정리.
+function cleanKey(s) {
+  return (s || "").trim().replace(/^["']|["']$/g, "").trim();
+}
+
 // 대화형 연결 설정. 키는 환경변수가 있으면 그걸 우선 안내(파일 저장 안 함).
-async function runSetup(rl, cfg) {
+// ask 가 null 을 주면(Ctrl+C) 조용히 취소.
+async function runSetup(ask, cfg) {
   console.log(panel(
     [
       "어떤 AI 에 연결할까요? 번호를 입력하세요.",
@@ -246,8 +248,9 @@ async function runSetup(rl, cfg) {
     ],
     { title: "🔌 연결 설정 (/setup)", color: "cyan" }
   ));
-  const pick = (await rl.question(c.cyan("제공자 번호 [1-4]: "))).trim();
-  const provider = { "1": "openai", "2": "anthropic", "3": "openrouter", "4": "mock" }[pick];
+  const pickRaw = await ask(c.cyan("제공자 번호 [1-4] (취소: Enter): "));
+  if (pickRaw === null) return false;
+  const provider = { "1": "openai", "2": "anthropic", "3": "openrouter", "4": "mock" }[pickRaw.trim()];
   if (!provider) {
     console.log(c.yellow("취소했습니다."));
     return false;
@@ -259,27 +262,36 @@ async function runSetup(rl, cfg) {
   } else {
     const envName = ENV_KEYS[provider];
     const envVal = (process.env[envName] || "").trim();
+    let useExistingEnv = false;
     if (envVal) {
-      const useEnv = (await rl.question(c.cyan(`환경변수 ${envName} 에서 키를 찾았어요. 사용할까요? [Y/n] `))).trim().toLowerCase();
-      if (useEnv === "" || useEnv === "y" || useEnv === "yes") {
-        cfg.api_key = ""; // 환경변수 사용 → 파일엔 저장 안 함
-      } else {
-        const k = (await rl.question(c.cyan("API 키 붙여넣기(입력이 보일 수 있음): "))).trim();
-        cfg.api_key = k;
-      }
+      const useEnv = (await ask(c.cyan(`환경변수 ${envName} 에서 키를 찾았어요. 사용할까요? [Y/n] `))) || "";
+      useExistingEnv = ["", "y", "yes"].includes(useEnv.trim().toLowerCase());
+    }
+    if (useExistingEnv) {
+      cfg.api_key = ""; // 환경변수 사용 → 파일엔 저장 안 함
     } else {
-      console.log(c.dim(`(또는 종료 후 환경변수 ${envName} 에 키를 넣어두면 파일에 저장하지 않아도 됩니다)`));
-      const k = (await rl.question(c.cyan("API 키 붙여넣기(입력이 보일 수 있음): "))).trim();
-      cfg.api_key = k;
+      if (!envVal) console.log(c.dim(`(또는 종료 후 환경변수 ${envName} 에 키를 넣어두면 파일에 저장하지 않아도 됩니다)`));
+      const k = await ask(c.cyan("API 키 붙여넣기(붙여넣기 후 Enter): "));
+      if (k === null) {
+        console.log(c.yellow("취소했습니다."));
+        return false;
+      }
+      cfg.api_key = cleanKey(k);
     }
     const sugg = SUGGESTED_MODELS[provider] || [];
     const def = sugg[0] || "";
-    const m = (await rl.question(c.cyan(`모델 [${def}] (추천: ${sugg.join(", ")}): `))).trim();
-    cfg.model = m || def;
+    const note = provider === "openrouter" ? c.dim("  (OpenRouter 는 'provider/model' 형식)") : "";
+    const m = await ask(c.cyan(`모델 [${def}]${note}\n  추천: ${sugg.join(", ")}\n  > `));
+    if (m === null) {
+      console.log(c.yellow("취소했습니다."));
+      return false;
+    }
+    cfg.model = m.trim() || def;
   }
 
   const saved = saveConfig(cfg);
   console.log(c.green(`설정을 저장했습니다 → ${saved}`));
+  console.log(c.dim(`provider=${cfg.provider} · model=${cfg.model}`));
   if (!cfg.isReady()) console.log(c.yellow("⚠️ 아직 키가 없어 호출이 실패할 수 있어요. 환경변수나 /setup 으로 키를 넣어주세요."));
   return true;
 }
@@ -345,12 +357,32 @@ export async function main(argv = []) {
   if (args.noTeach) cfg.teach_mode = false;
 
   const rl = readline.createInterface({ input: stdin, output: stdout });
+  let session = null;
+  let mcp = { tools: [], servers: [], errors: [], closeAll: () => {} };
+
+  // Ctrl+C → 깔끔하게 종료(스택트레이스 없이). 어디서 누르든 안전.
+  const gracefulExit = () => {
+    try { rl.close(); } catch { /* */ }
+    try { session && session.close(); } catch { /* */ }
+    try { mcp && mcp.closeAll && mcp.closeAll(); } catch { /* */ }
+    console.log(c.dim("\n종료합니다. 안녕히 가세요!"));
+    process.exit(0);
+  };
+  rl.on("SIGINT", gracefulExit);
+  // 프롬프트 헬퍼: Ctrl+C(AbortError) 등은 null 로 돌려 호출부가 취소로 처리.
+  const ask = async (q) => {
+    try {
+      return await rl.question(q);
+    } catch {
+      return null;
+    }
+  };
 
   if (args.setup) {
-    await runSetup(rl, cfg);
+    await runSetup(ask, cfg);
   } else if (!cfg.isReady() && cfg.provider !== "mock") {
     console.log(c.yellow(`provider=${cfg.provider} 인데 API 키가 없습니다. 연결 설정을 시작합니다.\n`));
-    await runSetup(rl, cfg);
+    await runSetup(ask, cfg);
   }
 
   printIntro(cfg);
@@ -361,7 +393,6 @@ export async function main(argv = []) {
   const filePlugins = await loadPlugins(cfg.workspacePath());
   const npm = await discoverNpmExtensions(process.cwd(), cfg.plugins || []);
   // ③ MCP 서버(다른 에이전트와 공용 표준)의 도구도 플러그인처럼 등록
-  let mcp = { tools: [], servers: [], errors: [], closeAll: () => {} };
   if (cfg.mcpServers && Object.keys(cfg.mcpServers).length) {
     process.stdout.write(c.dim("MCP 서버 연결 중...\r"));
     mcp = await connectMcpServers(cfg.mcpServers);
@@ -386,13 +417,13 @@ export async function main(argv = []) {
     console.log("🔌 " + bits.join(" · ") + c.dim("  (/plugins /skills /mcp 로 상세)") + "\n");
   }
 
-  const session = SessionLog.create();
+  session = SessionLog.create();
   const loop = new AgentLoop({
     config: cfg,
     client: makeClient(cfg),
     toolbox,
     onEvent: makePrinter(cfg),
-    approvalCallback: makeApproval(rl),
+    approvalCallback: makeApproval(ask),
     session,
   });
   loop.reset();
@@ -400,12 +431,9 @@ export async function main(argv = []) {
   const rule = () => console.log(c.grey("─".repeat(Math.min(80, stdout.columns || 80))));
 
   while (true) {
-    let user;
-    try {
-      user = (await rl.question(c.bold(c.cyan("› ")))).trim();
-    } catch {
-      break;
-    }
+    const raw = await ask(c.bold(c.cyan("› ")));
+    if (raw === null) break; // Ctrl+D / Ctrl+C / 스트림 종료
+    const user = raw.trim();
     if (!user) continue;
     const low = user.toLowerCase();
 
@@ -420,7 +448,7 @@ export async function main(argv = []) {
       continue;
     }
     if (low === "/setup" || low === "/login") {
-      await runSetup(rl, cfg);
+      await runSetup(ask, cfg);
       loop.client = makeClient(cfg);
       loop.reset();
       continue;

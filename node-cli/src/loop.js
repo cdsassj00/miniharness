@@ -19,6 +19,7 @@ export const Step = {
   APPROVAL: "approval",
   TOOL_RUN: "tool_run",
   TOOL_RESULT: "tool_result",
+  FEEDBACK: "feedback",
   DONE: "done",
   ERROR: "error",
 };
@@ -32,9 +33,34 @@ export const STEP_LABELS = {
   approval: "사용자 승인",
   tool_run: "도구 실행",
   tool_result: "결과 반영",
+  feedback: "결과 되먹임",
   done: "완료",
   error: "오류",
 };
+
+// 아주 거친 토큰 추정(영문 ~4자/토큰, 한글은 더 많지만 교육용 어림값).
+export function estimateTokens(text) {
+  return Math.max(1, Math.round((text || "").length / 4));
+}
+
+// messages 를 교육용으로 요약: 역할별 글자수 + 도구호출 수.
+function summarizeMessages(messages) {
+  let totalChars = 0;
+  const rows = messages.map((m) => {
+    const text = m.content || "";
+    let chars = text.length;
+    let extra = "";
+    if (m.tool_calls && m.tool_calls.length) {
+      const j = JSON.stringify(m.tool_calls);
+      chars += j.length;
+      extra = ` +tool_calls(${m.tool_calls.length})`;
+    }
+    if (m.role === "tool") extra = " (도구 결과)";
+    totalChars += chars;
+    return { role: m.role, chars, extra };
+  });
+  return { rows, totalChars, estTokens: estimateTokens(messages.map((m) => (m.content || "") + JSON.stringify(m.tool_calls || "")).join("")) };
+}
 
 const RULES_FILENAMES = ["AGENT.md", "AGENTS.md", "CLAUDE.md", "rules.md", "RULES.md"];
 
@@ -98,7 +124,13 @@ export class AgentLoop {
   }
 
   reset() {
-    this.messages = [{ role: "system", content: this._systemPrompt() }];
+    this.systemPromptText = this._systemPrompt();
+    this.messages = [{ role: "system", content: this.systemPromptText }];
+  }
+
+  // /context 명령용: 현재 대화 컨텍스트 요약.
+  contextSummary() {
+    return { ...summarizeMessages(this.messages), systemPrompt: this.systemPromptText };
   }
 
   async run(userInput) {
@@ -114,13 +146,26 @@ export class AgentLoop {
     );
 
     const tools = toolSchemas(this.config.allow_shell);
+    const toolNames = tools.map((t) => t.function.name);
     let finalText = "";
 
     for (let stepNo = 1; stepNo <= this.config.max_steps; stepNo++) {
+      // ② 모델에 보내는 컨텍스트를 그대로 드러낸다(교육 모드 핵심).
+      const ctx = summarizeMessages(this.messages);
       this._emit(
         Step.MODEL_CALL,
-        `LLM 호출 (반복 ${stepNo})`,
-        `메시지 ${this.messages.length}개를 모델에 전송합니다.`
+        `LLM 호출 (반복 ${stepNo}/${this.config.max_steps})`,
+        `메시지 ${this.messages.length}개(추정 ${ctx.estTokens} 토큰)를 모델에 전송합니다.`,
+        {
+          iteration: stepNo,
+          provider: this.config.provider,
+          model: this.config.model,
+          messages: ctx.rows,
+          totalChars: ctx.totalChars,
+          estTokens: ctx.estTokens,
+          tools: toolNames,
+          systemPrompt: stepNo === 1 ? this.systemPromptText : null,
+        }
       );
 
       let reply;
@@ -134,8 +179,12 @@ export class AgentLoop {
         throw e;
       }
 
+      // ③ 모델의 원본 판단 + 실측 메타(응답시간/토큰/요청크기)를 드러낸다.
       this._emit(Step.MODEL_REPLY, "모델 응답", reply.content || "(텍스트 없음)", {
         toolCalls: reply.toolCalls.map((tc) => ({ name: tc.name, args: tc.args })),
+        usage: reply.usage || null,
+        latencyMs: reply.latencyMs ?? null,
+        request: reply.request || null,
       });
       if (reply.content) finalText = reply.content;
 
@@ -163,6 +212,14 @@ export class AgentLoop {
         const resultText = await this._handleToolCall(tc);
         this.messages.push({ role: "tool", tool_call_id: tc.id, content: resultText });
       }
+
+      // ⑤ 도구 결과를 messages 에 넣고 다시 ②로 — 이 되먹임이 'Loop' 의 정체.
+      this._emit(
+        Step.FEEDBACK,
+        "결과 되먹임",
+        `도구 결과를 대화에 추가했습니다(현재 메시지 ${this.messages.length}개). 같은 컨텍스트로 다시 모델을 호출합니다.`,
+        { messageCount: this.messages.length }
+      );
     }
 
     this._emit(Step.DONE, "반복 한도 도달", `max_steps(${this.config.max_steps})에 도달해 종료했습니다.`);

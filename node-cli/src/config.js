@@ -4,16 +4,24 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export const PROVIDERS = ["openai", "openrouter", "mock"];
+export const PROVIDERS = ["openai", "anthropic", "openrouter", "mock"];
 
 export const SUGGESTED_MODELS = {
-  openai: ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4.1"],
+  openai: ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1"],
+  anthropic: ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest", "claude-sonnet-4-5"],
   openrouter: [
-    "openai/gpt-4.1-mini",
+    "openai/gpt-4o-mini",
     "anthropic/claude-3.5-sonnet",
     "google/gemini-2.5-flash",
   ],
   mock: ["mock-agent"],
+};
+
+// provider 별로 자동 감지하는 환경변수(파일에 키를 저장하지 않아도 됨)
+export const ENV_KEYS = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 export const APPROVAL_MODES = ["manual", "auto"];
@@ -27,6 +35,8 @@ const DEFAULTS = {
   allow_shell: false,
   max_steps: 8,
   temperature: 0.2,
+  max_tokens: 1024,
+  teach_mode: true,
 };
 
 export function configDir() {
@@ -54,9 +64,17 @@ export class Config {
     return p;
   }
 
+  // 파일에 저장된 키가 없으면 환경변수에서 찾는다.
+  resolvedKey() {
+    const direct = (this.api_key || "").trim();
+    if (direct) return direct;
+    const envName = ENV_KEYS[this.provider];
+    return envName ? (process.env[envName] || "").trim() : "";
+  }
+
   isReady() {
     if (this.provider === "mock") return true;
-    return Boolean((this.api_key || "").trim());
+    return Boolean(this.resolvedKey());
   }
 
   toJSON() {

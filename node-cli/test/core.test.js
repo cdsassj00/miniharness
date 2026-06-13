@@ -6,7 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { Config } from "../src/config.js";
-import { LLMClient } from "../src/llm.js";
+import { LLMClient, toAnthropicBody } from "../src/llm.js";
 import { AgentLoop, Step } from "../src/loop.js";
 import { Toolbox, ToolError, diffLines } from "../src/tools.js";
 
@@ -45,6 +45,47 @@ test("mock 전체 루프: 승인하면 파일이 수정된다", async () => {
   }
   const content = fs.readFileSync(path.join(ws, "notes.txt"), "utf8");
   assert.ok(content.includes("CDSA Harness mock 에이전트가 추가"));
+});
+
+test("mock: 인사에는 도구 없이 대화로만 답한다", async () => {
+  const client = new LLMClient({ provider: "mock", apiKey: "", model: "mock-agent" });
+  const reply = await client.chat([{ role: "user", content: "안녕" }], []);
+  assert.strictEqual(reply.toolCalls.length, 0);
+  assert.match(reply.content, /mock/);
+});
+
+test("정규화된 응답에 usage/latency/request 메타가 있다", async () => {
+  const client = new LLMClient({ provider: "mock", apiKey: "", model: "mock-agent" });
+  const reply = await client.chat([{ role: "user", content: "파일 만들어줘" }], []);
+  assert.ok("usage" in reply && "latencyMs" in reply && "request" in reply);
+  assert.strictEqual(reply.request.provider, "mock");
+});
+
+test("Anthropic 변환: system 분리 + tool_use/tool_result 매핑", () => {
+  const messages = [
+    { role: "system", content: "규칙" },
+    { role: "user", content: "안녕" },
+    {
+      role: "assistant",
+      content: "확인",
+      tool_calls: [{ id: "t1", type: "function", function: { name: "read_file", arguments: '{"path":"a.txt"}' } }],
+    },
+    { role: "tool", tool_call_id: "t1", content: "파일내용" },
+  ];
+  const tools = [{ type: "function", function: { name: "read_file", description: "읽기", parameters: { type: "object" } } }];
+  const body = toAnthropicBody(messages, tools, "claude-x", 0.2, 1024);
+
+  assert.strictEqual(body.system, "규칙");
+  assert.strictEqual(body.messages[0].role, "user");
+  // assistant turn 에 tool_use 블록
+  const asst = body.messages.find((m) => m.role === "assistant");
+  assert.ok(asst.content.some((b) => b.type === "tool_use" && b.name === "read_file"));
+  // tool 결과는 user 의 tool_result 블록으로
+  const toolResult = body.messages.find((m) => m.role === "user" && m.content.some((b) => b.type === "tool_result"));
+  assert.ok(toolResult);
+  // tools 스키마 변환(input_schema)
+  assert.strictEqual(body.tools[0].name, "read_file");
+  assert.ok(body.tools[0].input_schema);
 });
 
 test("거부하면 파일은 그대로다", async () => {

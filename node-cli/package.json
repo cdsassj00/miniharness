@@ -1,7 +1,7 @@
 {
   "name": "cdsa-harness",
-  "version": "0.1.1",
-  "description": "좁은 의미의 AI 에이전트 하네스를 터미널에서 체험하는 교육용 CLI (Claude Code / Codex / OpenCode 구조의 미니 런타임)",
+  "version": "0.2.0",
+  "description": "AI 에이전트의 내부 동작(컨텍스트·API요청·토큰·도구·되먹임)을 단계별로 드러내는 교육용 터미널 하네스. OpenAI/Claude/OpenRouter 지원.",
   "type": "module",
   "bin": {
     "cdsa-harness": "bin/cdsa-harness.js",

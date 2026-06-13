@@ -1,81 +1,93 @@
-# CDSA Harness (Node.js CLI) ⌨️
+# CDSA Harness (Node.js CLI) 🎓⌨️
 
-> Claude Code / Codex CLI / OpenCode 와 **똑같은 방식(npm/npx)** 으로 설치하는,
-> 좁은 의미의 AI 에이전트 하네스 교육용 터미널 앱.
-
-시작하면 ASCII 배너가 뜨고, **Agent Loop** 의 모든 단계가 색으로 흐릅니다.
+> **AI 에이전트가 내부에서 실제로 뭘 하는지** 단계별로 드러내는 교육용 터미널 하네스.
+> Claude Code·Codex 는 과정을 숨기지만, CDSA Harness 는 **컨텍스트 구성 → API 요청 → 모델의 판단 → 토큰/응답시간 → 도구 실행 → 결과 되먹임**을 전부 펼쳐 보여줍니다.
 
 ```
-입력 → 컨텍스트 구성 → LLM 호출 → 도구 판단 → 승인 → 실행 → 결과 반영 → 반복
+① 입력 → ② LLM 호출(보낼 컨텍스트·도구) → ③ 모델 응답(토큰·지연·tool_call)
+      → ④ 도구 판단 → ⑤ 실행/승인 → ⑥ 결과 되먹임 → (반복)
 ```
 
-- **의존성 0개** — Node 18+ 내장 기능만 사용(`fetch`/`readline`/`node:test`). `npx` 가 빠르고 설치 실패가 없습니다.
-- 같은 저장소의 Python 버전(Mini Harness GUI / CDSA Harness TUI)과 **동일한 하네스 구조**를 그대로 옮긴 것입니다.
+- **의존성 0개** — Node 18+ 내장 기능만(`fetch`/`readline`/`node:test`)
+- **실제 LLM 연결** — OpenAI · Anthropic(Claude) · OpenRouter, 또는 키 없이 `mock`
+- **교육 모드** — 매 반복마다 모델에 보내는 메시지 구성·추정 토큰·시스템 프롬프트, 실제 토큰 사용량/응답시간까지 그대로 표시
 
 ---
 
 ## 설치 / 실행
 
-### npx (설치 없이 즉시)
-
 ```bash
-# 로컬 체크아웃에서
-cd node-cli
-npx .                       # API Key 없으면 자동 mock 모드
+npx cdsa-harness                 # 설치 없이 즉시 (키 없으면 mock)
+npm install -g cdsa-harness      # 전역 설치 → 'cdsa-harness' / 'cdsa'
 ```
 
-### 전역 설치
+## 실제 AI 연결하기
 
+가장 쉬운 길 — 실행 후 `/setup` 입력(대화형으로 제공자·키·모델 선택):
 ```bash
-cd node-cli
-npm install -g .            # 또는: npm link
-cdsa-harness                # 어디서나 실행 (별칭: cdsa)
+cdsa-harness
+› /setup
 ```
 
-### 그냥 node 로
-
+또는 플래그/환경변수로:
 ```bash
-cd node-cli
-node bin/cdsa-harness.js
-```
+cdsa-harness --provider openai --model gpt-4o-mini
+cdsa-harness --provider anthropic --model claude-3-5-haiku-latest
 
-> npm 레지스트리에 publish 하면 `npm install -g cdsa-harness` / `npx cdsa-harness` 로 바로 설치됩니다.
+# 키는 환경변수로도 자동 인식(파일에 저장 안 함)
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENROUTER_API_KEY=sk-or-...
+```
 
 ---
 
-## 옵션 / 명령
+## 슬래시 명령
 
-```bash
-cdsa-harness --provider openai --model gpt-4.1-mini   # 실제 LLM
-cdsa-harness --provider openrouter --model anthropic/claude-3.5-sonnet
-cdsa-harness --workspace ./my-project                 # 작업 폴더 지정
-cdsa-harness --auto                                   # 승인 자동
+| 명령 | 설명 |
+|------|------|
+| `/setup` | 제공자·API 키·모델 대화형 연결 |
+| `/provider <이름>` | openai · anthropic · openrouter · mock 전환 |
+| `/model <이름>` | 모델 변경 |
+| `/teach` | 교육 모드 켜기/끄기 |
+| `/context` | 지금 모델에 보내는 컨텍스트 들여다보기 |
+| `/reset` | 대화/컨텍스트 초기화 |
+| `/config` | 현재 설정값 |
+| `/quit` | 종료 (Ctrl+D) |
+
+## 플래그
+
 ```
-
-터미널 슬래시 명령: `/help` · `/reset` · `/config` · `/sessions` · `/quit` (Ctrl+D 로도 종료)
+--provider <openai|anthropic|openrouter|mock>
+--model <모델명>
+--workspace <폴더경로>
+--setup        대화형 연결 설정
+--no-teach     교육 모드 끄고 간결 출력
+--auto         승인 자동
+```
 
 ---
 
 ## 설정 (config.json)
 
-`~/.cdsa_harness/config.json` 에 저장됩니다(실행 폴더에 `config.json` 이 있으면 우선).
+`~/.cdsa_harness/config.json` (실행 폴더에 `config.json` 있으면 우선).
 
 ```json
 {
   "provider": "openai",
   "api_key": "",
-  "model": "gpt-4.1-mini",
+  "model": "gpt-4o-mini",
   "workspace": "./workspace",
   "approval_mode": "manual",
   "allow_shell": false,
   "max_steps": 8,
-  "temperature": 0.2
+  "temperature": 0.2,
+  "max_tokens": 1024,
+  "teach_mode": true
 }
 ```
 
-작업 폴더 상대경로는 **현재 폴더(cwd)** 기준으로 해석합니다(CLI 답게).
-
----
+> `api_key` 가 비어 있으면 해당 provider 의 환경변수를 자동으로 찾습니다.
 
 ## 도구 & 안전장치
 
@@ -94,23 +106,20 @@ cdsa-harness --auto                                   # 승인 자동
 
 ```
 node-cli/
-├── bin/cdsa-harness.js   # npm/npx 진입점 (#!/usr/bin/env node)
+├── bin/cdsa-harness.js   # npm/npx 진입점
 ├── src/
-│   ├── config.js         # 설정 로드/저장
-│   ├── llm.js            # OpenAI/OpenRouter(fetch) + mock
-│   ├── tools.js          # 도구 + sandbox + diff + 스키마
-│   ├── loop.js           # ⭐ Agent Loop
+│   ├── config.js         # 설정 + 환경변수 키 감지
+│   ├── llm.js            # OpenAI/Anthropic/OpenRouter + mock, 응답 정규화(토큰·지연)
+│   ├── tools.js          # 도구 + sandbox + diff
+│   ├── loop.js           # ⭐ Agent Loop + 교육용 이벤트(컨텍스트/되먹임)
 │   ├── session.js        # 세션 로그(JSONL)
-│   ├── banner.js         # CDSA HARNESS ASCII 배너
-│   ├── ui.js             # ANSI 색/박스/diff 렌더
-│   └── cli.js            # 터미널 REPL
-├── workspace/            # 샘플 작업 폴더
+│   ├── banner.js / ui.js # 배너 · ANSI/박스/diff 렌더
+│   └── cli.js            # REPL + 교육 모드 렌더 + /setup
 └── test/core.test.js     # node --test
 ```
 
 ## 테스트
 
 ```bash
-cd node-cli
 npm test        # node --test
 ```

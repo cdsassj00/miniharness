@@ -1,0 +1,41 @@
+name: Publish CDSA Harness to npm
+
+# node-cli/ 의 CDSA Harness 를 npm 에 퍼블리시한다.
+# 트리거:
+#   1) GitHub 에서 Release 를 발행하면 자동 퍼블리시
+#   2) Actions 탭에서 수동 실행(workflow_dispatch)
+#
+# 사전 준비(1회):
+#   - npmjs.com 에서 'Automation' 타입 Access Token 발급
+#   - 이 저장소 Settings > Secrets and variables > Actions 에
+#     NPM_TOKEN 이라는 이름으로 토큰 등록
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # npm provenance 용
+    defaults:
+      run:
+        working-directory: node-cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Run tests
+        run: node --test
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

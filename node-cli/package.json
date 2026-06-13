@@ -30,5 +30,15 @@
     "llm",
     "education"
   ],
-  "license": "MIT"
+  "author": "cdsassj00",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cdsassj00/miniharness.git",
+    "directory": "node-cli"
+  },
+  "homepage": "https://github.com/cdsassj00/miniharness/tree/main/node-cli#readme",
+  "bugs": {
+    "url": "https://github.com/cdsassj00/miniharness/issues"
+  }
 }

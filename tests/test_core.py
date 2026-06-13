@@ -82,6 +82,27 @@ def test_denied_write_keeps_file_unchanged():
         assert (ws / "notes.txt").read_text(encoding="utf-8") == original
 
 
+def test_tui_banner_renders():
+    # pyfiglet 유무와 무관하게 배너 텍스트가 비어있지 않아야 한다(폴백 포함).
+    from miniharness.tui.banner import render_banner_text
+
+    art = render_banner_text()
+    assert art and "\n" in art
+
+
+def test_tui_printer_handles_all_steps():
+    # rich Console(record) 로 모든 단계 이벤트를 출력해도 예외가 없어야 한다.
+    from rich.console import Console
+
+    from miniharness.tui.runner import TuiPrinter
+
+    console = Console(record=True, width=80)
+    printer = TuiPrinter(console)
+    for step in Step:
+        printer(Event(step=step, title=f"{step.value} 제목", detail="상세 내용 예시"))
+    assert console.export_text()  # 무언가 출력됨
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

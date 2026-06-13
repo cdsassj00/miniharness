@@ -8,11 +8,13 @@ python -m venv .venv
 call .venv\Scripts\activate.bat
 
 python -m pip install --upgrade pip
-python -m pip install PySide6 pyinstaller
+python -m pip install PySide6 rich pyfiglet pyinstaller
 
 pyinstaller packaging\miniharness.spec --noconfirm
+pyinstaller packaging\cdsa_harness.spec --noconfirm
 
 echo.
 echo === 빌드 완료 ===
-echo 실행 파일: dist\MiniHarness\MiniHarness.exe
+echo GUI: dist\MiniHarness\MiniHarness.exe
+echo TUI: dist\CDSAHarness\CDSAHarness.exe
 pause

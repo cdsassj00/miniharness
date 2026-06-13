@@ -1,6 +1,13 @@
-# Mini Harness 실행에 필요한 패키지
-# (런타임 외부 의존성은 GUI 한 개로 최소화했습니다. HTTP 호출은 표준 라이브러리 urllib 사용)
+# Mini Harness / CDSA Harness 실행에 필요한 패키지
+
+# GUI (Mini Harness) — 데스크톱 앱
 PySide6>=6.6.0
+
+# TUI (CDSA Harness) — 터미널 앱
+rich>=13.0
+pyfiglet>=1.0        # 시작 배너용(없어도 폴백 배너로 동작)
+
+# LLM HTTP 호출은 표준 라이브러리 urllib 사용(추가 의존성 없음)
 
 # 빌드(선택): exe 생성용
 # pyinstaller>=6.0

@@ -7,8 +7,10 @@ echo "=== Mini Harness 빌드 시작 ==="
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install PySide6 pyinstaller
+python -m pip install PySide6 rich pyfiglet pyinstaller
 pyinstaller packaging/miniharness.spec --noconfirm
+pyinstaller packaging/cdsa_harness.spec --noconfirm
 echo
 echo "=== 빌드 완료 ==="
-echo "실행 파일: dist/MiniHarness/MiniHarness"
+echo "GUI: dist/MiniHarness/MiniHarness"
+echo "TUI: dist/CDSAHarness/CDSAHarness"

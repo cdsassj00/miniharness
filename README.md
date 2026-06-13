@@ -7,6 +7,10 @@ Mini Harness 는 프롬프트 서식기나 매뉴얼 생성기가 아닙니다.
 
 비개발자도 "AI 코딩 에이전트가 내부에서 무슨 일을 하는가"를 한 화면에서 볼 수 있도록 만들었습니다.
 
+> **두 가지 얼굴, 하나의 코어** — 같은 엔진(`agent/`·`llm/`·`config.py`)을 공유합니다.
+> - 🖥️ **Mini Harness (GUI)** — PySide6 데스크톱 앱 (`python run.py`)
+> - ⌨️ **CDSA Harness (TUI)** — Claude Code / OpenCode / Codex 같은 터미널 앱 (`python tui.py`)
+
 ```
 사용자 입력
   → 규칙 파일 읽기 (AGENT.md)
@@ -45,7 +49,31 @@ Mini Harness 는 그 루프의 모든 단계를 화면 우측 다이어그램에
 
 ## 빠른 시작
 
-### 1) 소스로 실행 (개발/학습)
+### ⌨️ CDSA Harness (터미널/TUI) — 추천
+
+실제 Claude Code / OpenCode / Codex 처럼 터미널에서 동작합니다. 시작 시 ASCII 배너가 뜹니다.
+
+```bash
+pip install -r requirements.txt
+python tui.py                 # API Key 없으면 자동으로 mock 모드
+python tui.py --provider openai --model gpt-4.1-mini   # 실제 LLM
+python tui.py --auto          # 승인 자동(approval_mode=auto)
+```
+
+```
+   __________  _____ ___       __  __
+  / ____/ __ \/ ___//   |     / / / /___ __________  ___  __________
+ / /   / / / /\__ \/ /| |    / /_/ / __ `/ ___/ __ \/ _ \/ ___/ ___/
+/ /___/ /_/ /___/ / ___ |   / __  / /_/ / /  / / / /  __(__  |__  )
+\____/_____//____/_/  |_|  /_/ /_/\__,_/_/  /_/ /_/\___/____/____/
+```
+
+루프의 각 단계(`🧱 컨텍스트 → 🧠 LLM 호출 → 🤔 도구 판단 → 🔐 승인 → 🔧 실행 → 📄 결과`)가
+색으로 흐르고, 파일 수정은 diff 를 보여준 뒤 `[y/N]` 로 승인받습니다.
+
+터미널 슬래시 명령: `/help` · `/reset` · `/config` · `/sessions` · `/quit`
+
+### 🖥️ Mini Harness (데스크톱/GUI)
 
 ```bash
 pip install -r requirements.txt
@@ -66,14 +94,20 @@ python run.py
 
 설정은 로컬 `config.json` 에 저장됩니다(아래 참고).
 
-### 3) Windows 실행 파일(exe) 빌드
+### Windows 실행 파일(exe) 빌드
 
 ```bat
 packaging\build_windows.bat
 ```
-→ `dist\MiniHarness\MiniHarness.exe`
+→ GUI: `dist\MiniHarness\MiniHarness.exe` / TUI: `dist\CDSAHarness\CDSAHarness.exe`
 
 (Linux/macOS 는 `bash packaging/build.sh`)
+
+개별 빌드는 직접 spec 을 지정하면 됩니다:
+```bash
+pyinstaller packaging/miniharness.spec    # GUI
+pyinstaller packaging/cdsa_harness.spec   # TUI
+```
 
 ---
 
@@ -123,7 +157,8 @@ packaging\build_windows.bat
 
 ```
 miniharness/
-├── run.py                     # 실행 런처 (python run.py)
+├── run.py                     # GUI 런처 (python run.py)
+├── tui.py                     # TUI 런처 (python tui.py)
 ├── requirements.txt
 ├── miniharness/
 │   ├── app.py                 # QApplication 부트스트랩 + 테마
@@ -135,12 +170,15 @@ miniharness/
 │   │   ├── tools.py           # 도구 + 경로 sandbox + function 스키마
 │   │   ├── session.py         # 세션 로그(JSONL)
 │   │   └── loop.py            # ⭐ Agent Loop 본체
-│   └── ui/                    # PySide6 화면 (코어를 호출만 함)
-│       ├── main_window.py     # 3분할 메인 화면
-│       ├── loop_view.py       # Agent Loop 단계 다이어그램
-│       ├── approval_dialog.py # 파일 수정 승인(diff)
-│       ├── settings_dialog.py # API Key/모델/워크스페이스 설정
-│       └── worker.py          # 백그라운드 스레드 + 승인 브릿지
+│   ├── ui/                    # PySide6 GUI (코어를 호출만 함)
+│   │   ├── main_window.py     # 3분할 메인 화면
+│   │   ├── loop_view.py       # Agent Loop 단계 다이어그램
+│   │   ├── approval_dialog.py # 파일 수정 승인(diff)
+│   │   ├── settings_dialog.py # API Key/모델/워크스페이스 설정
+│   │   └── worker.py          # 백그라운드 스레드 + 승인 브릿지
+│   └── tui/                   # rich 기반 TUI (코어를 호출만 함)
+│       ├── banner.py          # CDSA Harness ASCII 배너
+│       └── runner.py          # 터미널 REPL + 단계 출력 + 승인
 ├── workspace/                 # 샘플 작업 폴더 (AGENT.md, notes.txt)
 ├── packaging/                 # PyInstaller 스펙 + 빌드 스크립트
 └── tests/test_core.py         # 코어 end-to-end 테스트(mock)

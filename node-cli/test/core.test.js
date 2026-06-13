@@ -3,7 +3,10 @@ import assert from "node:assert";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+
+import { connectMcpServers } from "../src/mcp.js";
 
 import { Config } from "../src/config.js";
 import { LLMClient, toAnthropicBody } from "../src/llm.js";
@@ -150,6 +153,23 @@ test("npm 플러그인 자동 발견: cdsa-harness-plugin-* 패키지를 로드"
   assert.ok(res.skills.some((s) => s.name === "demoskill"), "skill 발견");
   const tool = res.plugins.find((p) => p.name === "demo_tool");
   assert.strictEqual(await tool.handler({}, {}), "ok");
+});
+
+test("MCP 클라이언트: 서버 연결 → 도구 발견 → 호출", async () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const server = path.join(here, "..", "test-fixtures", "mock-mcp-server.mjs");
+  const mcp = await connectMcpServers({ mock: { command: process.execPath, args: [server] } });
+  try {
+    assert.strictEqual(mcp.errors.length, 0, mcp.errors.join("; "));
+    assert.strictEqual(mcp.servers[0].count, 1);
+    const tool = mcp.tools.find((t) => t.name === "mcp__mock__echo");
+    assert.ok(tool, "echo 도구 등록됨");
+    assert.strictEqual(tool.mutating, false); // readOnlyHint → 승인 불필요
+    const out = await tool.handler({ text: "hi" });
+    assert.strictEqual(out, "echo:hi");
+  } finally {
+    mcp.closeAll();
+  }
 });
 
 test("거부하면 파일은 그대로다", async () => {

@@ -17,6 +17,7 @@ import { execFileSync } from "node:child_process";
 
 import { AgentLoop, Step } from "./loop.js";
 import { LLMClient } from "./llm.js";
+import { connectMcpServers } from "./mcp.js";
 import { discoverNpmExtensions, loadPlugins } from "./plugins.js";
 import { SessionLog, sessionsDir } from "./session.js";
 import { loadSkills, renderSkill } from "./skills.js";
@@ -218,7 +219,8 @@ function printHelp() {
         `  ${c.cyan("/teach")}    교육 모드 켜기/끄기(내부 과정 펼쳐보기)`,
         `  ${c.cyan("/context")}  지금 모델에 보내는 컨텍스트 들여다보기`,
         `  ${c.cyan("/skills")}   스킬 목록(.cdsa/skills 의 /명령들)`,
-        `  ${c.cyan("/plugins")}  플러그인 목록(.cdsa/plugins 의 추가 도구)`,
+        `  ${c.cyan("/plugins")}  플러그인 목록(파일·npm 추가 도구)`,
+        `  ${c.cyan("/mcp")}      연결된 MCP 서버/도구(다른 에이전트와 공용)`,
         `  ${c.cyan("/reset")}    대화/컨텍스트 초기화`,
         `  ${c.cyan("/config")}   현재 설정값`,
         `  ${c.cyan("/quit")}     종료 (Ctrl+D)`,
@@ -358,17 +360,30 @@ export async function main(argv = []) {
   //   ② npm 패키지: cdsa-harness-plugin-* 자동 발견 + config.plugins 강제 로드
   const filePlugins = await loadPlugins(cfg.workspacePath());
   const npm = await discoverNpmExtensions(process.cwd(), cfg.plugins || []);
-  const plugins = [...filePlugins, ...npm.plugins, ...npm.errors.map((e) => ({ error: e }))];
+  // ③ MCP 서버(다른 에이전트와 공용 표준)의 도구도 플러그인처럼 등록
+  let mcp = { tools: [], servers: [], errors: [], closeAll: () => {} };
+  if (cfg.mcpServers && Object.keys(cfg.mcpServers).length) {
+    process.stdout.write(c.dim("MCP 서버 연결 중...\r"));
+    mcp = await connectMcpServers(cfg.mcpServers);
+  }
+  const plugins = [
+    ...filePlugins,
+    ...npm.plugins,
+    ...mcp.tools,
+    ...npm.errors.map((e) => ({ error: e })),
+    ...mcp.errors.map((e) => ({ error: `MCP ${e}` })),
+  ];
   const skills = {};
   for (const s of npm.skills) skills[s.name] = { name: s.name, description: s.description || "", body: s.body, source: "(npm)" };
   Object.assign(skills, loadSkills(cfg.workspacePath())); // 로컬 파일 스킬이 우선
   const toolbox = new Toolbox(cfg.workspacePath(), cfg.allow_shell, plugins);
-  if (toolbox.plugins.length || Object.keys(skills).length || toolbox.pluginErrors.length) {
+  if (toolbox.plugins.length || Object.keys(skills).length || toolbox.pluginErrors.length || mcp.servers.length) {
     const bits = [];
-    if (toolbox.plugins.length) bits.push(c.green(`플러그인 ${toolbox.plugins.length}개`) + c.grey(` (${toolbox.plugins.map((p) => p.name).join(", ")})`));
-    if (Object.keys(skills).length) bits.push(c.green(`스킬 ${Object.keys(skills).length}개`) + c.grey(` (${Object.keys(skills).map((s) => "/" + s).join(", ")})`));
-    if (toolbox.pluginErrors.length) bits.push(c.red(`플러그인 오류 ${toolbox.pluginErrors.length}개`));
-    console.log("🔌 " + bits.join(" · ") + "\n");
+    if (toolbox.plugins.length) bits.push(c.green(`도구 +${toolbox.plugins.length}개`));
+    if (mcp.servers.length) bits.push(c.green(`MCP ${mcp.servers.length}개`) + c.grey(` (${mcp.servers.map((s) => s.name).join(", ")})`));
+    if (Object.keys(skills).length) bits.push(c.green(`스킬 ${Object.keys(skills).length}개`));
+    if (toolbox.pluginErrors.length) bits.push(c.red(`오류 ${toolbox.pluginErrors.length}개`));
+    console.log("🔌 " + bits.join(" · ") + c.dim("  (/plugins /skills /mcp 로 상세)") + "\n");
   }
 
   const session = SessionLog.create();
@@ -449,6 +464,16 @@ export async function main(argv = []) {
       console.log(panel(lines, { title: "🔌 플러그인 (모델이 쓸 수 있는 추가 도구)", color: "blue" }));
       continue;
     }
+    if (low === "/mcp") {
+      const lines = [];
+      if (!mcp.servers.length) lines.push(c.dim("연결된 MCP 서버가 없습니다."));
+      for (const s of mcp.servers) lines.push(`${c.bold(s.name)}  ${c.grey(`도구 ${s.count}개`)}`);
+      for (const t of mcp.tools) lines.push(`  ${c.cyan(t.name)}  ${c.grey(clip(t.description, 60))}`);
+      for (const e of mcp.errors) lines.push(c.red("✖ " + e));
+      lines.push(c.dim('설정: config.json 의 "mcpServers" (Claude Code/Cursor 와 동일 형식)'));
+      console.log(panel(lines, { title: "🔗 MCP 서버 (다른 에이전트와 공용)", color: "blue" }));
+      continue;
+    }
     if (low === "/skills") {
       const names = Object.keys(skills);
       const lines = names.length ? names.map((n) => `${c.cyan("/" + n)}  ${c.grey(skills[n].description || "")}`) : [c.dim("등록된 스킬이 없습니다.")];
@@ -487,6 +512,7 @@ export async function main(argv = []) {
 
   rl.close();
   session.close();
+  mcp.closeAll();
   console.log(c.dim("\n종료합니다. 안녕히 가세요!"));
   return 0;
 }

@@ -11,8 +11,9 @@
 - **의존성 0개** — Node 18+ 내장 기능만(`fetch`/`readline`/`node:test`)
 - **실제 LLM 연결** — OpenAI · Anthropic(Claude) · OpenRouter, 또는 키 없이 `mock`
 - **교육 모드** — 매 반복마다 모델에 보내는 메시지 구성·추정 토큰·시스템 프롬프트, 실제 토큰 사용량/응답시간까지 그대로 표시
-- **플러그인** — `.cdsa/plugins/` 에 JS 파일을 두면 **새 도구가 자동 등록**되어 모델이 사용
-- **스킬** — `.cdsa/skills/` 에 마크다운을 두면 `/이름` 으로 부르는 **프롬프트 템플릿**
+- **MCP 클라이언트** — Claude Code·Cursor 등과 **공용 표준**. MCP 서버를 그대로 붙여 도구로 사용
+- **플러그인** — npm 으로 설치하거나 `.cdsa/plugins/` 에 JS 파일 → **도구 자동 등록**
+- **크로스포맷 스킬** — `.cdsa/skills/` 뿐 아니라 `.claude/commands/`·`.opencode/command/` 의 스킬도 인식
 
 ---
 
@@ -108,10 +109,27 @@ export default {
 };
 ```
 
+## 🔗 MCP — 다른 에이전트와 플러그인 공유
+
+[MCP](https://modelcontextprotocol.io) 서버는 Claude Code·Cursor·Zed 등이 함께 쓰는 **공용 도구 표준**입니다.
+`config.json` 에 **그 도구들과 동일한 형식**으로 적으면, 다른 에이전트용으로 만든 MCP 서버를 cdsa-harness 에서 그대로 씁니다.
+
+```json
+{
+  "mcpServers": {
+    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"] },
+    "github":     { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_TOKEN": "..." } }
+  }
+}
+```
+
+연결되면 각 도구가 `mcp__서버__도구` 이름으로 모델에 노출됩니다. `/mcp` 로 확인.
+(부수효과가 있을 수 있는 도구는 실행 전 승인을 받습니다 — `readOnlyHint` 가 있으면 자동.)
+
 ## 🎯 스킬 (프롬프트 템플릿)
 
-`.cdsa/skills/` 또는 `~/.cdsa_harness/skills/` 에 마크다운을 두면 `/파일명` 으로 실행됩니다.
-본문의 `$ARGUMENTS` 는 명령 뒤 텍스트로 치환됩니다. `/skills` 로 목록 확인.
+`.cdsa/skills/` 에 마크다운을 두면 `/파일명` 으로 실행됩니다. 본문의 `$ARGUMENTS`(또는 `{{args}}`)가 치환됩니다.
+**다른 에이전트의 스킬도 인식** — `.claude/commands/`, `.claude/skills/<이름>/SKILL.md`, `.opencode/command/` 등을 함께 읽습니다. `/skills` 로 목록 확인.
 
 ```markdown
 ---
@@ -165,6 +183,9 @@ node-cli/
 │   ├── llm.js            # OpenAI/Anthropic/OpenRouter + mock, 응답 정규화(토큰·지연)
 │   ├── tools.js          # 도구 + sandbox + diff
 │   ├── loop.js           # ⭐ Agent Loop + 교육용 이벤트(컨텍스트/되먹임)
+│   ├── mcp.js            # MCP 클라이언트(stdio JSON-RPC) — 다른 에이전트와 공용
+│   ├── plugins.js        # 파일·npm 플러그인 발견/로드
+│   ├── skills.js         # 크로스포맷 스킬 로더
 │   ├── session.js        # 세션 로그(JSONL)
 │   ├── banner.js / ui.js # 배너 · ANSI/박스/diff 렌더
 │   └── cli.js            # REPL + 교육 모드 렌더 + /setup

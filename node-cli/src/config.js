@@ -38,6 +38,7 @@ const DEFAULTS = {
   max_tokens: 1024,
   teach_mode: true,
   plugins: [], // 추가로 불러올 npm 플러그인 패키지 이름(이름 규칙과 무관하게 강제 로드)
+  mcpServers: {}, // MCP 서버 설정 (Claude Code/Cursor 와 동일한 형식)
 };
 
 export function configDir() {

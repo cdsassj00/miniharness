@@ -1,7 +1,7 @@
 {
   "name": "cdsa-harness",
-  "version": "0.4.0",
-  "description": "AI 에이전트의 내부 동작을 단계별로 드러내는 교육용 터미널 하네스. OpenAI/Claude/OpenRouter + npm 으로 설치하는 플러그인(추가 도구)·스킬 확장.",
+  "version": "0.5.0",
+  "description": "AI 에이전트의 내부 동작을 단계별로 드러내는 교육용 터미널 하네스. OpenAI/Claude/OpenRouter + MCP(다른 에이전트와 공용) + npm 플러그인·크로스포맷 스킬.",
   "type": "module",
   "bin": {
     "cdsa-harness": "bin/cdsa-harness.js",

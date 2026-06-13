@@ -11,6 +11,8 @@
 - **의존성 0개** — Node 18+ 내장 기능만(`fetch`/`readline`/`node:test`)
 - **실제 LLM 연결** — OpenAI · Anthropic(Claude) · OpenRouter, 또는 키 없이 `mock`
 - **교육 모드** — 매 반복마다 모델에 보내는 메시지 구성·추정 토큰·시스템 프롬프트, 실제 토큰 사용량/응답시간까지 그대로 표시
+- **플러그인** — `.cdsa/plugins/` 에 JS 파일을 두면 **새 도구가 자동 등록**되어 모델이 사용
+- **스킬** — `.cdsa/skills/` 에 마크다운을 두면 `/이름` 으로 부르는 **프롬프트 템플릿**
 
 ---
 
@@ -67,6 +69,40 @@ export OPENROUTER_API_KEY=sk-or-...
 ```
 
 ---
+
+## 🔌 플러그인 (추가 도구 만들기)
+
+`.cdsa/plugins/` (작업 폴더) 또는 `~/.cdsa_harness/plugins/` (전역) 에 `.js`/`.mjs` 파일을 두면
+자동으로 도구로 등록되어 **모델이 호출**할 수 있습니다. `/plugins` 로 목록 확인.
+
+```js
+// .cdsa/plugins/word_count.mjs
+import fs from "node:fs";
+import path from "node:path";
+export default {
+  name: "word_count",
+  description: "텍스트 파일의 글자/줄/단어 수를 센다",
+  parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+  mutating: false,                 // true 면 실행 전 승인
+  async handler(args, ctx) {       // ctx.workspace = 작업 폴더 절대경로
+    const text = fs.readFileSync(path.resolve(ctx.workspace, args.path), "utf8");
+    return `글자 ${text.length}, 줄 ${text.split("\n").length}`;
+  },
+};
+```
+
+## 🎯 스킬 (프롬프트 템플릿)
+
+`.cdsa/skills/` 또는 `~/.cdsa_harness/skills/` 에 마크다운을 두면 `/파일명` 으로 실행됩니다.
+본문의 `$ARGUMENTS` 는 명령 뒤 텍스트로 치환됩니다. `/skills` 로 목록 확인.
+
+```markdown
+---
+description: 파일을 읽고 3줄로 요약
+---
+$ARGUMENTS 파일을 read_file 로 읽고 핵심을 한국어 3줄로 요약해줘.
+```
+실행: `/summarize notes.txt`
 
 ## 설정 (config.json)
 

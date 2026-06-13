@@ -51,10 +51,27 @@ export function diffLines(oldText, newText) {
 }
 
 export class Toolbox {
-  constructor(workspace, allowShell = false) {
+  constructor(workspace, allowShell = false, plugins = []) {
     this.workspace = path.resolve(workspace);
     fs.mkdirSync(this.workspace, { recursive: true });
     this.allowShell = allowShell;
+    // 정상 로드된 플러그인만 도구로 사용(로드 에러는 따로 보관해 표시).
+    this.plugins = plugins.filter((p) => p && p.name && typeof p.handler === "function");
+    this.pluginErrors = plugins.filter((p) => p && p.error).map((p) => p.error);
+    this._pluginMap = new Map(this.plugins.map((p) => [p.name, p]));
+  }
+
+  // 실행 전 사용자 승인이 필요한 도구인가? (환경을 바꾸는 내장 도구 + mutating 플러그인)
+  isMutating(name) {
+    if (MUTATING_TOOLS.has(name)) return true;
+    const p = this._pluginMap.get(name);
+    return Boolean(p && p.mutating);
+  }
+
+  label(name) {
+    if (TOOL_LABELS[name]) return TOOL_LABELS[name];
+    const p = this._pluginMap.get(name);
+    return p ? `플러그인:${name}` : name;
   }
 
   _resolve(rel) {
@@ -148,16 +165,27 @@ export class Toolbox {
     return { ok: code === 0, output: `$ ${command}\n(exit=${code})\n${out}` };
   }
 
-  execute(name, args = {}) {
+  async execute(name, args = {}) {
     if (name === "list_dir") return this.listDir(args.path || ".");
     if (name === "read_file") return this.readFile(args.path || "");
     if (name === "write_file") return this.writeFile(args.path || "", args.content || "");
     if (name === "run_shell") return this.runShell(args.command || "");
+    const plugin = this._pluginMap.get(name);
+    if (plugin) {
+      let result;
+      try {
+        result = await plugin.handler(args, { workspace: this.workspace });
+      } catch (e) {
+        throw new ToolError(`플러그인 '${name}' 실행 오류: ${e.message}`);
+      }
+      const output = typeof result === "string" ? result : result?.output ?? JSON.stringify(result);
+      return { ok: true, output: String(output) };
+    }
     throw new ToolError(`알 수 없는 도구입니다: ${name}`);
   }
 }
 
-export function toolSchemas(allowShell = false) {
+export function toolSchemas(allowShell = false, plugins = []) {
   const schemas = [
     {
       type: "function",
@@ -213,6 +241,18 @@ export function toolSchemas(allowShell = false) {
           properties: { command: { type: "string", description: "실행할 명령" } },
           required: ["command"],
         },
+      },
+    });
+  }
+  // 플러그인이 제공하는 도구를 모델에게도 노출한다.
+  for (const p of plugins) {
+    if (!p || !p.name || typeof p.handler !== "function") continue;
+    schemas.push({
+      type: "function",
+      function: {
+        name: p.name,
+        description: (p.description || `플러그인 도구 ${p.name}`) + (p.mutating ? " (승인 필요)" : ""),
+        parameters: p.parameters || { type: "object", properties: {} },
       },
     });
   }

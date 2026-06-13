@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { LLMError } from "./llm.js";
-import { MUTATING_TOOLS, TOOL_LABELS, ToolError, toolSchemas } from "./tools.js";
+import { TOOL_LABELS, ToolError, toolSchemas } from "./tools.js";
 
 // 단계(Step) 상수
 export const Step = {
@@ -145,7 +145,7 @@ export class AgentLoop {
       "규칙 파일 + 작업 폴더 내용을 시스템 프롬프트로 묶어 모델에 전달합니다."
     );
 
-    const tools = toolSchemas(this.config.allow_shell);
+    const tools = toolSchemas(this.config.allow_shell, this.toolbox.plugins);
     const toolNames = tools.map((t) => t.function.name);
     let finalText = "";
 
@@ -227,8 +227,8 @@ export class AgentLoop {
   }
 
   async _handleToolCall(tc) {
-    const label = TOOL_LABELS[tc.name] || tc.name;
-    const needsApproval = MUTATING_TOOLS.has(tc.name);
+    const label = this.toolbox.label ? this.toolbox.label(tc.name) : TOOL_LABELS[tc.name] || tc.name;
+    const needsApproval = this.toolbox.isMutating(tc.name);
 
     if (needsApproval && this.config.approval_mode === "manual") {
       const req = this._buildApprovalRequest(tc);
@@ -250,7 +250,7 @@ export class AgentLoop {
 
     this._emit(Step.TOOL_RUN, `도구 실행: ${label}`, JSON.stringify(tc.args).slice(0, 2000));
     try {
-      const result = this.toolbox.execute(tc.name, tc.args);
+      const result = await this.toolbox.execute(tc.name, tc.args);
       this._emit(Step.TOOL_RESULT, `결과 반영: ${label}`, (result.output || "").slice(0, 4000));
       return result.output;
     } catch (e) {

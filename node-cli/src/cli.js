@@ -15,7 +15,9 @@ import {
 } from "./config.js";
 import { AgentLoop, Step } from "./loop.js";
 import { LLMClient } from "./llm.js";
+import { loadPlugins } from "./plugins.js";
 import { SessionLog, sessionsDir } from "./session.js";
+import { loadSkills, renderSkill } from "./skills.js";
 import { Toolbox } from "./tools.js";
 import { c, panel, renderDiff } from "./ui.js";
 
@@ -213,6 +215,8 @@ function printHelp() {
         `  ${c.cyan("/model")} <이름>   모델 변경`,
         `  ${c.cyan("/teach")}    교육 모드 켜기/끄기(내부 과정 펼쳐보기)`,
         `  ${c.cyan("/context")}  지금 모델에 보내는 컨텍스트 들여다보기`,
+        `  ${c.cyan("/skills")}   스킬 목록(.cdsa/skills 의 /명령들)`,
+        `  ${c.cyan("/plugins")}  플러그인 목록(.cdsa/plugins 의 추가 도구)`,
         `  ${c.cyan("/reset")}    대화/컨텍스트 초기화`,
         `  ${c.cyan("/config")}   현재 설정값`,
         `  ${c.cyan("/quit")}     종료 (Ctrl+D)`,
@@ -328,7 +332,18 @@ export async function main(argv = []) {
 
   printIntro(cfg);
 
-  const toolbox = new Toolbox(cfg.workspacePath(), cfg.allow_shell);
+  // 플러그인(추가 도구)·스킬(프롬프트 템플릿)을 작업 폴더/홈에서 불러온다.
+  const plugins = await loadPlugins(cfg.workspacePath());
+  const skills = loadSkills(cfg.workspacePath());
+  const toolbox = new Toolbox(cfg.workspacePath(), cfg.allow_shell, plugins);
+  if (toolbox.plugins.length || Object.keys(skills).length || toolbox.pluginErrors.length) {
+    const bits = [];
+    if (toolbox.plugins.length) bits.push(c.green(`플러그인 ${toolbox.plugins.length}개`) + c.grey(` (${toolbox.plugins.map((p) => p.name).join(", ")})`));
+    if (Object.keys(skills).length) bits.push(c.green(`스킬 ${Object.keys(skills).length}개`) + c.grey(` (${Object.keys(skills).map((s) => "/" + s).join(", ")})`));
+    if (toolbox.pluginErrors.length) bits.push(c.red(`플러그인 오류 ${toolbox.pluginErrors.length}개`));
+    console.log("🔌 " + bits.join(" · ") + "\n");
+  }
+
   const session = SessionLog.create();
   const loop = new AgentLoop({
     config: cfg,
@@ -392,6 +407,41 @@ export async function main(argv = []) {
       for (const m of ctx.rows) lines.push(`  ${c.bold(m.role.padEnd(9))} ${c.grey(`${m.chars}자${m.extra || ""}`)}`);
       console.log(panel(lines, { title: "🧩 현재 컨텍스트(다음 호출에 전송됨)", color: "magenta" }));
       console.log(panel(clip(ctx.systemPrompt, 800).split("\n"), { title: "📜 시스템 프롬프트", color: "grey" }));
+      continue;
+    }
+    if (low === "/plugins") {
+      const lines = [];
+      if (!toolbox.plugins.length) lines.push(c.dim("등록된 플러그인이 없습니다."));
+      for (const p of toolbox.plugins) lines.push(`${c.bold(p.name)}${p.mutating ? c.yellow(" (승인필요)") : ""}  ${c.grey(p.description || "")}`);
+      for (const e of toolbox.pluginErrors) lines.push(c.red("✖ " + e));
+      lines.push(c.dim("위치: <작업폴더>/.cdsa/plugins/ 또는 ~/.cdsa_harness/plugins/ (.js/.mjs)"));
+      console.log(panel(lines, { title: "🔌 플러그인 (모델이 쓸 수 있는 추가 도구)", color: "blue" }));
+      continue;
+    }
+    if (low === "/skills") {
+      const names = Object.keys(skills);
+      const lines = names.length ? names.map((n) => `${c.cyan("/" + n)}  ${c.grey(skills[n].description || "")}`) : [c.dim("등록된 스킬이 없습니다.")];
+      lines.push(c.dim("위치: <작업폴더>/.cdsa/skills/ 또는 ~/.cdsa_harness/skills/ (.md). 본문의 $ARGUMENTS 치환."));
+      console.log(panel(lines, { title: "🎯 스킬 (프롬프트 템플릿, /이름 으로 실행)", color: "cyan" }));
+      continue;
+    }
+
+    // 위 내장 명령에 안 걸린 '/...' → 스킬이면 실행, 아니면 안내.
+    if (user.startsWith("/")) {
+      const name = low.slice(1).split(/\s+/)[0];
+      if (skills[name]) {
+        const argStr = user.split(/\s+/).slice(1).join(" ");
+        console.log(c.dim(`(스킬 '/${name}' 실행)`));
+        rule();
+        try {
+          await loop.run(renderSkill(skills[name], argStr));
+        } catch (e) {
+          console.log(c.red(`실행 오류: ${e?.message || e}`));
+        }
+        rule();
+      } else {
+        console.log(c.yellow(`알 수 없는 명령/스킬: /${name} — ${c.cyan("/help")}, ${c.cyan("/skills")} 참고`));
+      }
       continue;
     }
 

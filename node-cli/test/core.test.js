@@ -8,7 +8,8 @@ import { test } from "node:test";
 import { Config } from "../src/config.js";
 import { LLMClient, toAnthropicBody } from "../src/llm.js";
 import { AgentLoop, Step } from "../src/loop.js";
-import { Toolbox, ToolError, diffLines } from "../src/tools.js";
+import { loadSkills, renderSkill } from "../src/skills.js";
+import { Toolbox, ToolError, diffLines, toolSchemas } from "../src/tools.js";
 
 function tmpWs() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "cdsa-"));
@@ -86,6 +87,42 @@ test("Anthropic 변환: system 분리 + tool_use/tool_result 매핑", () => {
   // tools 스키마 변환(input_schema)
   assert.strictEqual(body.tools[0].name, "read_file");
   assert.ok(body.tools[0].input_schema);
+});
+
+test("플러그인: 추가 도구로 등록되고 실행/스키마/승인 판정된다", async () => {
+  const ws = tmpWs();
+  const plugin = {
+    name: "echo_upper",
+    description: "대문자로",
+    parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+    mutating: true,
+    handler: async (args) => `RESULT:${(args.text || "").toUpperCase()}`,
+  };
+  const tb = new Toolbox(ws, false, [plugin, { error: "bad.js: 깨짐" }]);
+
+  assert.strictEqual(tb.plugins.length, 1);
+  assert.deepStrictEqual(tb.pluginErrors, ["bad.js: 깨짐"]);
+  assert.strictEqual(tb.isMutating("echo_upper"), true); // 승인 필요
+  const res = await tb.execute("echo_upper", { text: "hi" });
+  assert.strictEqual(res.output, "RESULT:HI");
+
+  // 모델에게 노출되는 스키마에도 포함
+  const schemas = toolSchemas(false, tb.plugins);
+  assert.ok(schemas.some((s) => s.function.name === "echo_upper"));
+});
+
+test("스킬: 마크다운 로드 + $ARGUMENTS 치환", () => {
+  const ws = tmpWs();
+  fs.mkdirSync(path.join(ws, ".cdsa", "skills"), { recursive: true });
+  fs.writeFileSync(
+    path.join(ws, ".cdsa", "skills", "greet.md"),
+    "---\ndescription: 인사\n---\n$ARGUMENTS 에게 정중히 인사해줘.",
+    "utf8"
+  );
+  const skills = loadSkills(ws);
+  assert.ok(skills.greet);
+  assert.strictEqual(skills.greet.description, "인사");
+  assert.strictEqual(renderSkill(skills.greet, "철수"), "철수 에게 정중히 인사해줘.");
 });
 
 test("거부하면 파일은 그대로다", async () => {

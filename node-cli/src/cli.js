@@ -13,9 +13,11 @@ import {
   loadConfig,
   saveConfig,
 } from "./config.js";
+import { execFileSync } from "node:child_process";
+
 import { AgentLoop, Step } from "./loop.js";
 import { LLMClient } from "./llm.js";
-import { loadPlugins } from "./plugins.js";
+import { discoverNpmExtensions, loadPlugins } from "./plugins.js";
 import { SessionLog, sessionsDir } from "./session.js";
 import { loadSkills, renderSkill } from "./skills.js";
 import { Toolbox } from "./tools.js";
@@ -302,6 +304,7 @@ export async function main(argv = []) {
     console.log(
       "CDSA Harness — AI 에이전트 내부를 드러내는 교육용 하네스 (터미널)\n\n" +
         "사용법: cdsa-harness [옵션]\n" +
+        "       cdsa-harness add <npm-패키지>   플러그인 설치(이후 자동 로드)\n" +
         "  --provider <openai|anthropic|openrouter|mock>\n" +
         "  --model <모델명>\n" +
         "  --workspace <폴더경로>\n" +
@@ -312,6 +315,24 @@ export async function main(argv = []) {
         "API 키는 환경변수로도 인식됩니다: OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY\n"
     );
     return 0;
+  }
+
+  // `cdsa-harness add <패키지>` — 플러그인을 npm 으로 설치(이후 자동 로드).
+  if (args._[0] === "add" || args._[0] === "install") {
+    const pkgs = args._.slice(1);
+    if (!pkgs.length) {
+      console.log("사용법: cdsa-harness add <npm-패키지...>   예) cdsa-harness add cdsa-harness-plugin-git");
+      return 1;
+    }
+    console.log(c.cyan(`npm install ${pkgs.join(" ")} ...`));
+    try {
+      execFileSync("npm", ["install", ...pkgs], { stdio: "inherit", cwd: process.cwd() });
+      console.log(c.green("설치 완료. 다음 실행부터 플러그인이 자동으로 로드됩니다 (/plugins 로 확인)."));
+      return 0;
+    } catch (e) {
+      console.log(c.red(`설치 실패: ${e.message}`));
+      return 1;
+    }
   }
 
   const cfg = loadConfig();
@@ -332,9 +353,15 @@ export async function main(argv = []) {
 
   printIntro(cfg);
 
-  // 플러그인(추가 도구)·스킬(프롬프트 템플릿)을 작업 폴더/홈에서 불러온다.
-  const plugins = await loadPlugins(cfg.workspacePath());
-  const skills = loadSkills(cfg.workspacePath());
+  // 플러그인(추가 도구)·스킬(프롬프트 템플릿)을 불러온다:
+  //   ① 파일: .cdsa/plugins · .cdsa/skills (작업폴더/홈)
+  //   ② npm 패키지: cdsa-harness-plugin-* 자동 발견 + config.plugins 강제 로드
+  const filePlugins = await loadPlugins(cfg.workspacePath());
+  const npm = await discoverNpmExtensions(process.cwd(), cfg.plugins || []);
+  const plugins = [...filePlugins, ...npm.plugins, ...npm.errors.map((e) => ({ error: e }))];
+  const skills = {};
+  for (const s of npm.skills) skills[s.name] = { name: s.name, description: s.description || "", body: s.body, source: "(npm)" };
+  Object.assign(skills, loadSkills(cfg.workspacePath())); // 로컬 파일 스킬이 우선
   const toolbox = new Toolbox(cfg.workspacePath(), cfg.allow_shell, plugins);
   if (toolbox.plugins.length || Object.keys(skills).length || toolbox.pluginErrors.length) {
     const bits = [];
@@ -412,9 +439,13 @@ export async function main(argv = []) {
     if (low === "/plugins") {
       const lines = [];
       if (!toolbox.plugins.length) lines.push(c.dim("등록된 플러그인이 없습니다."));
-      for (const p of toolbox.plugins) lines.push(`${c.bold(p.name)}${p.mutating ? c.yellow(" (승인필요)") : ""}  ${c.grey(p.description || "")}`);
+      for (const p of toolbox.plugins) {
+        const src = p.source && p.source.includes("/") ? "📄 " + p.source.split("/").slice(-1)[0] : "📦 " + (p.source || "npm");
+        lines.push(`${c.bold(p.name)}${p.mutating ? c.yellow(" (승인필요)") : ""}  ${c.grey(p.description || "")} ${c.dim(src)}`);
+      }
       for (const e of toolbox.pluginErrors) lines.push(c.red("✖ " + e));
-      lines.push(c.dim("위치: <작업폴더>/.cdsa/plugins/ 또는 ~/.cdsa_harness/plugins/ (.js/.mjs)"));
+      lines.push(c.dim("추가: npm 패키지 'cdsa-harness-plugin-*' 설치 → 자동 로드 (cdsa-harness add <pkg>)"));
+      lines.push(c.dim("또는: <작업폴더>/.cdsa/plugins/ 에 .js/.mjs 파일"));
       console.log(panel(lines, { title: "🔌 플러그인 (모델이 쓸 수 있는 추가 도구)", color: "blue" }));
       continue;
     }

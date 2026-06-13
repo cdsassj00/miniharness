@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { Config } from "../src/config.js";
 import { LLMClient, toAnthropicBody } from "../src/llm.js";
 import { AgentLoop, Step } from "../src/loop.js";
+import { scanNodeModules } from "../src/plugins.js";
 import { loadSkills, renderSkill } from "../src/skills.js";
 import { Toolbox, ToolError, diffLines, toolSchemas } from "../src/tools.js";
 
@@ -123,6 +124,32 @@ test("스킬: 마크다운 로드 + $ARGUMENTS 치환", () => {
   assert.ok(skills.greet);
   assert.strictEqual(skills.greet.description, "인사");
   assert.strictEqual(renderSkill(skills.greet, "철수"), "철수 에게 정중히 인사해줘.");
+});
+
+test("npm 플러그인 자동 발견: cdsa-harness-plugin-* 패키지를 로드", async () => {
+  const ws = tmpWs();
+  const nm = path.join(ws, "node_modules");
+  const pkgDir = path.join(nm, "cdsa-harness-plugin-demo");
+  fs.mkdirSync(pkgDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(pkgDir, "package.json"),
+    JSON.stringify({ name: "cdsa-harness-plugin-demo", version: "1.0.0", type: "module", main: "index.mjs" }),
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(pkgDir, "index.mjs"),
+    `export default {
+       tools: [{ name: "demo_tool", description: "데모", parameters: { type: "object", properties: {} }, handler: async () => "ok" }],
+       skills: [{ name: "demoskill", description: "데모 스킬", body: "데모 $ARGUMENTS" }],
+     };`,
+    "utf8"
+  );
+
+  const res = await scanNodeModules(nm);
+  assert.ok(res.plugins.some((p) => p.name === "demo_tool"), "plugin 발견");
+  assert.ok(res.skills.some((s) => s.name === "demoskill"), "skill 발견");
+  const tool = res.plugins.find((p) => p.name === "demo_tool");
+  assert.strictEqual(await tool.handler({}, {}), "ok");
 });
 
 test("거부하면 파일은 그대로다", async () => {

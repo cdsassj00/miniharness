@@ -70,10 +70,27 @@ export OPENROUTER_API_KEY=sk-or-...
 
 ---
 
-## 🔌 플러그인 (추가 도구 만들기)
+## 🔌 플러그인 (추가 도구)
 
-`.cdsa/plugins/` (작업 폴더) 또는 `~/.cdsa_harness/plugins/` (전역) 에 `.js`/`.mjs` 파일을 두면
-자동으로 도구로 등록되어 **모델이 호출**할 수 있습니다. `/plugins` 로 목록 확인.
+### 방법 A — npm 으로 설치 (권장)
+
+`cdsa-harness-plugin-*` 이름의 패키지를 설치하면 **자동으로 발견·로드**됩니다.
+
+```bash
+cdsa-harness add cdsa-harness-plugin-git   # = npm install 후 자동 로드
+# 또는 직접:  npm install cdsa-harness-plugin-git
+cdsa-harness                               # 실행 → /plugins 에 자동 등록됨
+```
+
+- cwd 의 `node_modules` 와 전역 설치 위치를 모두 탐색합니다.
+- 이름 규칙과 무관하게 강제 로드하려면 `config.json` 의 `"plugins": ["패키지명"]` 에 추가.
+- 플러그인 패키지는 default export 로 `플러그인 def` · `def 배열` · `{ tools:[...], skills:[...] }` 중 하나를 제공.
+
+> **npm vs npx**: `npm install`(=설치, 보관) 으로 플러그인을 **추가**하고, `npx`(=설치 없이 실행) 또는 설치된 `cdsa-harness` 로 **실행**합니다.
+
+### 방법 B — 로컬 파일 (실험용)
+
+`.cdsa/plugins/` (작업 폴더) 또는 `~/.cdsa_harness/plugins/` 에 `.js`/`.mjs` 파일을 두면 자동 등록.
 
 ```js
 // .cdsa/plugins/word_count.mjs

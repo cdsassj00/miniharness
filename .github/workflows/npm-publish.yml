@@ -18,9 +18,6 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write   # npm provenance 용
     defaults:
       run:
         working-directory: node-cli
@@ -36,6 +33,6 @@ jobs:
         run: node --test
 
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,0 +1,34 @@
+{
+  "name": "cdsa-harness",
+  "version": "0.1.0",
+  "description": "좁은 의미의 AI 에이전트 하네스를 터미널에서 체험하는 교육용 CLI (Claude Code / Codex / OpenCode 구조의 미니 런타임)",
+  "type": "module",
+  "bin": {
+    "cdsa-harness": "bin/cdsa-harness.js",
+    "cdsa": "bin/cdsa-harness.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node bin/cdsa-harness.js",
+    "test": "node --test"
+  },
+  "files": [
+    "bin",
+    "src",
+    "workspace",
+    "README.md"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "harness",
+    "agent-loop",
+    "cli",
+    "tui",
+    "llm",
+    "education"
+  ],
+  "license": "MIT"
+}

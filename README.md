@@ -7,9 +7,10 @@ Mini Harness 는 프롬프트 서식기나 매뉴얼 생성기가 아닙니다.
 
 비개발자도 "AI 코딩 에이전트가 내부에서 무슨 일을 하는가"를 한 화면에서 볼 수 있도록 만들었습니다.
 
-> **두 가지 얼굴, 하나의 코어** — 같은 엔진(`agent/`·`llm/`·`config.py`)을 공유합니다.
+> **세 가지 얼굴, 하나의 코어** — 같은 하네스 구조(`agent/`·`llm/`·`config`)를 공유합니다.
 > - 🖥️ **Mini Harness (GUI)** — PySide6 데스크톱 앱 (`python run.py`)
-> - ⌨️ **CDSA Harness (TUI)** — Claude Code / OpenCode / Codex 같은 터미널 앱 (`python tui.py`)
+> - ⌨️ **CDSA Harness (Python TUI)** — 터미널 앱 (`python tui.py`)
+> - 📦 **CDSA Harness (Node.js CLI)** — Claude Code/Codex처럼 npm/npx 설치 → [`node-cli/`](node-cli/) (`npx cdsa-harness`)
 
 ```
 사용자 입력
@@ -49,7 +50,18 @@ Mini Harness 는 그 루프의 모든 단계를 화면 우측 다이어그램에
 
 ## 빠른 시작
 
-### ⌨️ CDSA Harness (터미널/TUI) — 추천
+### 📦 CDSA Harness (Node.js CLI) — Claude Code/Codex처럼 설치
+
+```bash
+cd node-cli
+npm install -g .       # 전역 설치 → 어디서나 'cdsa-harness'
+cdsa-harness           # 실행 (API Key 없으면 자동 mock)
+# 또는 설치 없이:  cd node-cli && npx .
+```
+
+의존성 0개(Node 18+ 내장만 사용). 자세한 내용은 [`node-cli/README.md`](node-cli/README.md).
+
+### ⌨️ CDSA Harness (Python 터미널/TUI)
 
 실제 Claude Code / OpenCode / Codex 처럼 터미널에서 동작합니다. 시작 시 ASCII 배너가 뜹니다.
 

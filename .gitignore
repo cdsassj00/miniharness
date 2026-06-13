@@ -19,3 +19,8 @@ sessions/
 # OS
 .DS_Store
 Thumbs.db
+
+# Node.js (node-cli)
+node_modules/
+npm-debug.log*
+package-lock.json

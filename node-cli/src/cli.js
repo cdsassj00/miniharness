@@ -436,7 +436,7 @@ export async function main(argv = []) {
   ];
   const skills = {};
   for (const s of npm.skills) skills[s.name] = { name: s.name, description: s.description || "", body: s.body, source: "(npm)" };
-  Object.assign(skills, loadSkills(cfg.workspacePath())); // 로컬 파일 스킬이 우선
+  Object.assign(skills, loadSkills(cfg.workspacePath(), { importForeign: cfg.import_foreign_skills })); // 로컬 파일 스킬이 우선
   const toolbox = new Toolbox(cfg.workspacePath(), cfg.allow_shell, plugins);
   if (toolbox.plugins.length || Object.keys(skills).length || toolbox.pluginErrors.length || mcp.servers.length) {
     const bits = [];

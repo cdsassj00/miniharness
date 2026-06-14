@@ -18,24 +18,24 @@ function builtinSkillsDir() {
   return path.resolve(here, "..", "skills"); // .../<pkg>/skills
 }
 
-// 우리 폴더 + 다른 코딩 에이전트들의 커맨드/스킬 폴더도 함께 읽어 상호운용한다.
-// (Claude Code, OpenCode 등은 스킬이 결국 frontmatter 달린 마크다운이라 그대로 호환)
-// 순서 = 우선순위(먼저 발견된 것이 이김). 사용자 폴더가 내장 기본보다 우선.
-export function skillDirs(workspace) {
+// 스킬 폴더 목록. 순서 = 우선순위(먼저 발견된 것이 이김).
+//  - native: 우리/사용자 전용 폴더(항상)
+//  - foreign: 다른 코딩 에이전트의 커맨드 폴더 — importForeign 일 때만, 그리고
+//    '현재 작업 폴더(프로젝트)' 한정으로만 읽는다. (전역 ~/.claude/commands 는 읽지 않음:
+//     Claude Code/Antigravity/SPARC 등이 흩뿌린 수십 개가 통째로 쏟아지는 걸 방지)
+export function skillDirs(workspace, importForeign = true) {
   const home = os.homedir();
-  return [
-    // 작업 폴더(가장 우선)
-    path.join(workspace, ".cdsa", "skills"),
+  const foreign = [
     path.join(workspace, ".claude", "commands"),
     path.join(workspace, ".claude", "skills"),
     path.join(workspace, ".opencode", "command"),
     path.join(workspace, ".github", "prompts"),
-    // 전역(홈)
-    path.join(home, ".cdsa_harness", "skills"),
-    path.join(home, ".claude", "commands"),
-    path.join(home, ".config", "opencode", "command"),
-    // 패키지 내장 기본(가장 마지막 = 사용자 것이 덮어씀)
-    builtinSkillsDir(),
+  ];
+  return [
+    path.join(workspace, ".cdsa", "skills"), // 프로젝트(가장 우선)
+    ...(importForeign ? foreign : []), // 프로젝트 한정 외부 포맷
+    path.join(home, ".cdsa_harness", "skills"), // 우리 전역
+    builtinSkillsDir(), // 패키지 내장 기본(가장 마지막 = 사용자 것이 덮어씀)
   ];
 }
 
@@ -61,9 +61,9 @@ function addSkill(skills, name, file) {
   }
 }
 
-export function loadSkills(workspace) {
+export function loadSkills(workspace, { importForeign = true } = {}) {
   const skills = {};
-  for (const dir of skillDirs(workspace)) {
+  for (const dir of skillDirs(workspace, importForeign)) {
     let entries = [];
     try {
       if (!fs.existsSync(dir)) continue;

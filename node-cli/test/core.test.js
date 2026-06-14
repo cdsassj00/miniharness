@@ -126,9 +126,10 @@ test("플러그인: 추가 도구로 등록되고 실행/스키마/승인 판정
 test("내장 스킬: 빈 작업폴더에서도 기본 스킬이 딸려온다(설치 시 공유)", () => {
   const skills = loadSkills(tmpWs());
   // 패키지에 동봉된 기본 스킬은 cwd 와 무관하게 로드되어야 한다.
-  assert.ok(skills.explain, "explain 내장 스킬");
-  assert.ok(skills.review, "review 내장 스킬");
-  assert.ok(skills.summarize, "summarize 내장 스킬");
+  for (const name of ["explain", "review", "summarize", "tour", "plan", "eli5", "rubberduck", "quiz", "haiku", "todo", "loop"]) {
+    assert.ok(skills[name], `${name} 내장 스킬`);
+    assert.ok(skills[name].description, `${name} 설명`);
+  }
 });
 
 test("스킬: 마크다운 로드 + $ARGUMENTS 치환", () => {

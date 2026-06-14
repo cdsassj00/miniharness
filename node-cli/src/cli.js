@@ -2,6 +2,7 @@
 // 핵심 차별점: '교육 모드' — 실제 API 를 붙여도 에이전트 내부에서 벌어지는 일
 // (컨텍스트 구성 → API 요청 → 모델 판단 → 토큰/지연 → 도구 실행 → 결과 되먹임)을 단계별로 드러낸다.
 import readline from "node:readline/promises";
+import path from "node:path";
 import { stdin, stdout } from "node:process";
 
 import { renderBanner } from "./banner.js";
@@ -436,7 +437,10 @@ export async function main(argv = []) {
   ];
   const skills = {};
   for (const s of npm.skills) skills[s.name] = { name: s.name, description: s.description || "", body: s.body, source: "(npm)" };
-  Object.assign(skills, loadSkills(cfg.workspacePath(), { importForeign: cfg.import_foreign_skills })); // 로컬 파일 스킬이 우선
+  Object.assign(
+    skills,
+    loadSkills(cfg.workspacePath(), { importForeign: cfg.import_foreign_skills, extraDirs: cfg.skill_dirs || [] })
+  ); // 로컬 파일 스킬이 우선
   const toolbox = new Toolbox(cfg.workspacePath(), cfg.allow_shell, plugins);
   if (toolbox.plugins.length || Object.keys(skills).length || toolbox.pluginErrors.length || mcp.servers.length) {
     const bits = [];
@@ -548,9 +552,22 @@ export async function main(argv = []) {
       continue;
     }
     if (low === "/skills") {
-      const names = Object.keys(skills);
-      const lines = names.length ? names.map((n) => `${c.cyan("/" + n)}  ${c.grey(skills[n].description || "")}`) : [c.dim("등록된 스킬이 없습니다.")];
-      lines.push(c.dim("위치: <작업폴더>/.cdsa/skills/ 또는 ~/.cdsa_harness/skills/ (.md). 본문의 $ARGUMENTS 치환."));
+      const names = Object.keys(skills).sort();
+      const srcTag = (s) => {
+        const src = s.source || "";
+        if (src === "(npm)") return c.dim("📦 npm");
+        if (src.includes(`${path.sep}.claude${path.sep}`)) return c.dim("🟣 claude");
+        if (src.includes(`${path.sep}.opencode${path.sep}`)) return c.dim("🟠 opencode");
+        if (src.includes(`${path.sep}node-cli${path.sep}skills`) || src.includes(`cdsa-harness${path.sep}skills`)) return c.dim("⭐ 내장");
+        if (src.includes(`.cdsa_harness${path.sep}skills`)) return c.dim("🏠 전역");
+        if (src.includes(`.cdsa${path.sep}skills`)) return c.dim("📂 프로젝트");
+        return c.dim("📄 파일");
+      };
+      const lines = names.length
+        ? names.map((n) => `${c.cyan("/" + n)}  ${c.grey(skills[n].description || "")}  ${srcTag(skills[n])}`)
+        : [c.dim("등록된 스킬이 없습니다.")];
+      lines.push(c.dim("추가: <작업폴더>/.cdsa/skills/*.md · ~/.cdsa_harness/skills/ · config.json 의 skill_dirs"));
+      lines.push(c.dim("외부(.claude/commands 등)는 import_foreign_skills 로 끌 수 있음"));
       console.log(panel(lines, { title: "🎯 스킬 (프롬프트 템플릿, /이름 으로 실행)", color: "cyan" }));
       continue;
     }

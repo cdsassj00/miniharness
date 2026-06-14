@@ -131,7 +131,10 @@ export default {
 ## 🎯 스킬 (프롬프트 템플릿)
 
 `.cdsa/skills/` 에 마크다운을 두면 `/파일명` 으로 실행됩니다. 본문의 `$ARGUMENTS`(또는 `{{args}}`)가 치환됩니다.
-**다른 에이전트의 스킬도 인식** — `.claude/commands/`, `.claude/skills/<이름>/SKILL.md`, `.opencode/command/` 등을 함께 읽습니다. `/skills` 로 목록 확인.
+
+- **기본 내장 스킬**: `/explain` · `/review` · `/summarize` 는 패키지에 동봉되어 **설치하면 누구에게나** 제공됩니다.
+- **다른 에이전트의 스킬도 인식** — `.claude/commands/`, `.claude/skills/<이름>/SKILL.md`, `.opencode/command/` 등을 함께 읽습니다.
+- **남과 공유**하려면: 로컬 스킬 파일은 본인만 쓰지만, 플러그인 패키지(`{ skills: [...] }`)로 npm 배포하면 `cdsa-harness add` 한 모두가 사용. `/skills` 로 목록 확인.
 
 ```markdown
 ---

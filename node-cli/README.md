@@ -135,6 +135,13 @@ export default {
 - **기본 내장 스킬**(설치하면 누구에게나 제공):
   - 실용: `/explain` 쉽게 설명 · `/review` 코드 리뷰 · `/summarize` 3줄 요약 · `/tour` 프로젝트 브리핑 · `/todo` 미완성(TODO) 수집 · `/plan` 실행 전 계획만
   - 교육/재미: `/eli5` 5살도 알게 · `/rubberduck` 질문으로 디버깅 · `/quiz` 학습 퀴즈 · `/haiku` 하이쿠 · `/loop` 이 요청을 에이전트 루프로 어떻게 처리할지 해설
+  - **🇰🇷 공공(대한민국)**: `/minwon` 민원분류 · `/gongmun` 공문 기안 · `/privacy` 개인정보 점검 · `/press` 보도자료 · `/report` 개조식 보고 · `/minutes` 회의록 · `/policyqa` 정책 Q&A · `/hwpx` 한컴 문서 요약
+
+## 🇰🇷 공공 특화 + HWPX
+
+- **공공 스킬** — 위 `/minwon` `/gongmun` `/privacy` 등으로 민원·공문·개인정보·보도자료 등 행정 업무를 바로 시도.
+- **HWPX 내장 도구(`hwpx_read`)** — 한컴 `.hwpx` 문서(zip+xml)에서 본문 텍스트를 **의존성 없이** 추출. `/hwpx 파일.hwpx` 로 읽어 요약.
+  - 구버전 `.hwp`(바이너리)는 한컴오피스에서 `.hwpx` 로 저장 후 사용.
 - **다른 에이전트의 스킬도 인식** — `.claude/commands/`, `.claude/skills/<이름>/SKILL.md`, `.opencode/command/` 등을 함께 읽습니다.
 - **남과 공유**하려면: 로컬 스킬 파일은 본인만 쓰지만, 플러그인 패키지(`{ skills: [...] }`)로 npm 배포하면 `cdsa-harness add` 한 모두가 사용. `/skills` 로 목록 확인.
 

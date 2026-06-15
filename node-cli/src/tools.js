@@ -55,8 +55,11 @@ export class Toolbox {
     this.workspace = path.resolve(workspace);
     fs.mkdirSync(this.workspace, { recursive: true });
     this.allowShell = allowShell;
-    // 정상 로드된 플러그인만 도구로 사용(로드 에러는 따로 보관해 표시).
-    this.plugins = plugins.filter((p) => p && p.name && typeof p.handler === "function");
+    // 정상 로드된 플러그인만 도구로 사용(로드 에러는 따로 보관해 표시). 이름 중복은 먼저 것 우선.
+    const seen = new Set();
+    this.plugins = plugins.filter(
+      (p) => p && p.name && typeof p.handler === "function" && !seen.has(p.name) && seen.add(p.name)
+    );
     this.pluginErrors = plugins.filter((p) => p && p.error).map((p) => p.error);
     this._pluginMap = new Map(this.plugins.map((p) => [p.name, p]));
   }

@@ -15,8 +15,15 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+// 패키지에 동봉된 기본(내장) 플러그인 폴더 — 설치하면 누구에게나 딸려온다.
+function builtinPluginsDir() {
+  const here = path.dirname(fileURLToPath(import.meta.url)); // .../<pkg>/src
+  return path.resolve(here, "..", "plugins"); // .../<pkg>/plugins
+}
+
 export function pluginDirs(workspace) {
   return [
+    builtinPluginsDir(), // 내장 기본(가장 먼저)
     path.join(os.homedir(), ".cdsa_harness", "plugins"),
     path.join(workspace, ".cdsa", "plugins"),
   ];

@@ -54,14 +54,44 @@ function isWide(code) {
   );
 }
 
-// 둥근 박스 패널. lines: 문자열 배열(ANSI 포함 가능)
+// 문자열을 표시폭 기준으로 줄바꿈(한글=2칸). ANSI 없는 평문 전용.
+export function wrapToWidth(s, width) {
+  if (width < 4) width = 4;
+  const out = [];
+  for (const rawLine of String(s).split("\n")) {
+    let cur = "";
+    let w = 0;
+    for (const ch of rawLine) {
+      const cw = ch.codePointAt(0) > 0x1100 && isWide(ch.codePointAt(0)) ? 2 : 1;
+      if (w + cw > width) {
+        out.push(cur);
+        cur = "";
+        w = 0;
+      }
+      cur += ch;
+      w += cw;
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
+// 둥근 박스 패널. lines: 문자열 배열(ANSI 포함 가능).
+// 터미널 폭을 넘는 '평문' 줄은 자동 줄바꿈해 박스 밖으로 삐져나가지 않게 한다.
 export function panel(lines, { title = "", color = "cyan" } = {}) {
   const paint = c[color] || ((x) => x);
-  const body = Array.isArray(lines) ? lines : String(lines).split("\n");
-  const contentWidth = Math.max(
-    visibleWidth(title) + 2,
-    ...body.map((l) => visibleWidth(l)),
-    10
+  const raw = Array.isArray(lines) ? lines : String(lines).split("\n");
+  const maxInner = Math.max(20, (process.stdout.columns || 80) - 4);
+  // ANSI 가 없는 긴 줄만 줄바꿈(색칠된 줄은 그대로 둠)
+  const body = [];
+  for (const l of raw) {
+    if (!ANSI_RE.test(l) && visibleWidth(l) > maxInner) body.push(...wrapToWidth(l, maxInner));
+    else body.push(l);
+    ANSI_RE.lastIndex = 0;
+  }
+  const contentWidth = Math.min(
+    maxInner,
+    Math.max(visibleWidth(title) + 2, ...body.map((l) => visibleWidth(l)), 10)
   );
   const top = paint("╭─ ") + paint(c.bold(title)) + paint(" " + "─".repeat(Math.max(0, contentWidth - visibleWidth(title) - 2)) + "╮");
   const bottom = paint("╰" + "─".repeat(contentWidth + 2) + "╯");

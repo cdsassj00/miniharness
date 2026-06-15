@@ -7,6 +7,28 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import { connectMcpServers } from "../src/mcp.js";
+import { loadPlugins } from "../src/plugins.js";
+import hwpxPlugin from "../plugins/hwpx_read.mjs";
+
+// 테스트용 최소 ZIP(저장 방식) 빌더 — HWPX 컨테이너를 흉내낸다.
+function le16(n) { const b = Buffer.alloc(2); b.writeUInt16LE(n); return b; }
+function le32(n) { const b = Buffer.alloc(4); b.writeUInt32LE(n >>> 0); return b; }
+function buildStoredZip(files) {
+  const locals = [], centrals = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = Buffer.from(f.name, "utf8");
+    const data = Buffer.from(f.data, "utf8");
+    const local = Buffer.concat([le32(0x04034b50), le16(20), le16(0), le16(0), le16(0), le16(0), le32(0), le32(data.length), le32(data.length), le16(name.length), le16(0), name, data]);
+    locals.push(local);
+    centrals.push(Buffer.concat([le32(0x02014b50), le16(20), le16(20), le16(0), le16(0), le16(0), le16(0), le32(0), le32(data.length), le32(data.length), le16(name.length), le16(0), le16(0), le16(0), le16(0), le32(0), le32(offset), name]));
+    offset += local.length;
+  }
+  const localsBuf = Buffer.concat(locals);
+  const cd = Buffer.concat(centrals);
+  const eocd = Buffer.concat([le32(0x06054b50), le16(0), le16(0), le16(files.length), le16(files.length), le32(cd.length), le32(localsBuf.length), le16(0)]);
+  return Buffer.concat([localsBuf, cd, eocd]);
+}
 
 import { Config } from "../src/config.js";
 import { LLMClient, toAnthropicBody } from "../src/llm.js";
@@ -187,6 +209,29 @@ test("MCP 클라이언트: 서버 연결 → 도구 발견 → 호출", async ()
   } finally {
     mcp.closeAll();
   }
+});
+
+test("내장 플러그인: 빈 폴더에서도 hwpx_read 가 로드된다", async () => {
+  const plugins = await loadPlugins(tmpWs());
+  assert.ok(plugins.some((p) => p.name === "hwpx_read"), "hwpx_read 내장 플러그인");
+});
+
+test("HWPX 파서: .hwpx(zip+xml)에서 본문 텍스트 추출", async () => {
+  const ws = tmpWs();
+  const xml = `<?xml version="1.0"?><hml><hp:p><hp:t>안녕하세요 공공기관</hp:t></hp:p><hp:p><hp:t>민원 처리 안내문입니다.</hp:t></hp:p></hml>`;
+  const zip = buildStoredZip([
+    { name: "Contents/section0.xml", data: xml },
+    { name: "mimetype", data: "application/hwp+zip" },
+  ]);
+  fs.writeFileSync(path.join(ws, "doc.hwpx"), zip);
+  const out = await hwpxPlugin.handler({ path: "doc.hwpx" }, { workspace: ws });
+  assert.match(out, /안녕하세요 공공기관/);
+  assert.match(out, /민원 처리 안내문/);
+});
+
+test(".hwp(구버전)은 안내 메시지를 준다", async () => {
+  const out = await hwpxPlugin.handler({ path: "old.hwp" }, { workspace: tmpWs() });
+  assert.match(out, /hwpx/i);
 });
 
 test("거부하면 파일은 그대로다", async () => {

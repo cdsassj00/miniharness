@@ -14,13 +14,18 @@ const ENDPOINTS = {
 };
 
 export class LLMClient {
-  constructor({ provider, apiKey, model, temperature = 0.2, maxTokens = 1024, timeout = 60000 }) {
+  constructor({ provider, apiKey, model, temperature = 0.2, maxTokens = 1024, timeout = 60000, baseUrl = "" }) {
     this.provider = provider;
     this.apiKey = apiKey;
     this.model = model;
     this.temperature = temperature;
     this.maxTokens = maxTokens;
     this.timeout = timeout;
+    this.baseUrl = (baseUrl || "").trim(); // 있으면 ENDPOINTS 대신 이 엔드포인트 사용(폐쇄망 사내 LLM)
+  }
+
+  _endpoint(provider) {
+    return this.baseUrl || ENDPOINTS[provider] || ENDPOINTS.anthropic;
   }
 
   // onToken(chunk) 를 주면 텍스트가 도착하는 대로 콜백한다(스트리밍).
@@ -83,7 +88,7 @@ export class LLMClient {
 
   // --- OpenAI / OpenRouter (chat/completions 형식) ---
   async _openaiChat(messages, tools) {
-    const url = ENDPOINTS[this.provider];
+    const url = this._endpoint(this.provider);
     const body = { model: this.model, messages, temperature: this.temperature };
     if (tools && tools.length) {
       body.tools = tools;
@@ -108,7 +113,7 @@ export class LLMClient {
 
   // --- Anthropic (messages 형식) ---
   async _anthropicChat(messages, tools) {
-    const url = ENDPOINTS.anthropic;
+    const url = this._endpoint("anthropic");
     const body = toAnthropicBody(messages, tools, this.model, this.temperature, this.maxTokens);
     const headers = {
       "x-api-key": this.apiKey,
@@ -126,7 +131,7 @@ export class LLMClient {
 
   // --- OpenAI/OpenRouter 스트리밍 ---
   async _openaiStream(messages, tools, onToken) {
-    const url = ENDPOINTS[this.provider];
+    const url = this._endpoint(this.provider);
     const body = { model: this.model, messages, temperature: this.temperature, stream: true, stream_options: { include_usage: true } };
     if (tools && tools.length) {
       body.tools = tools;
@@ -168,7 +173,7 @@ export class LLMClient {
 
   // --- Anthropic 스트리밍 ---
   async _anthropicStream(messages, tools, onToken) {
-    const url = ENDPOINTS.anthropic;
+    const url = this._endpoint("anthropic");
     const body = toAnthropicBody(messages, tools, this.model, this.temperature, this.maxTokens);
     body.stream = true;
     const headers = { "x-api-key": this.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" };

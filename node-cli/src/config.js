@@ -30,6 +30,7 @@ export const APPROVAL_MODES = ["manual", "auto"];
 const DEFAULTS = {
   provider: "mock",
   api_key: "",
+  base_url: "", // OpenAI 호환 사내/폐쇄망 LLM 의 전체 엔드포인트 직접 지정(있으면 우선)
   model: "mock-agent",
   workspace: "./workspace",
   approval_mode: "manual",

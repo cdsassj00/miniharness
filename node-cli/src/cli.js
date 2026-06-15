@@ -1,6 +1,7 @@
 // CDSA Harness TUI 본체 — 터미널 REPL.
 // 핵심 차별점: '교육 모드' — 실제 API 를 붙여도 에이전트 내부에서 벌어지는 일
 // (컨텍스트 구성 → API 요청 → 모델 판단 → 토큰/지연 → 도구 실행 → 결과 되먹임)을 단계별로 드러낸다.
+import { readFileSync } from "node:fs";
 import readline from "node:readline/promises";
 import path from "node:path";
 import { stdin, stdout } from "node:process";
@@ -25,7 +26,11 @@ import { loadSkills, renderSkill } from "./skills.js";
 import { Toolbox } from "./tools.js";
 import { c, panel, renderDiff } from "./ui.js";
 
-const VERSION = "0.2.0";
+// 버전은 package.json 에서 읽어 항상 일치시킨다(수동 동기화 불필요).
+let VERSION = "0.0.0";
+try {
+  VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+} catch { /* 기본값 유지 */ }
 
 const STEP_STYLE = {
   [Step.USER_INPUT]: ["🧑", "cyan"],
@@ -201,18 +206,20 @@ function makeClient(cfg) {
     model: cfg.model,
     temperature: cfg.temperature,
     maxTokens: cfg.max_tokens,
+    baseUrl: cfg.base_url,
   });
 }
 
 function printIntro(cfg) {
   console.log(renderBanner());
-  console.log(c.dim("AI 에이전트의 내부 동작을 단계별로 드러내는 교육용 하네스"));
+  console.log(c.dim("AI 에이전트의 내부 동작을 단계별로 드러내는 교육용 하네스") + "  " + c.cyan("· made by CDSA"));
   console.log();
   const keySource = cfg.provider === "mock" ? "-" : cfg.api_key ? "config.json" : ENV_KEYS[cfg.provider] && process.env[ENV_KEYS[cfg.provider]] ? `환경변수 ${ENV_KEYS[cfg.provider]}` : c.red("없음");
   const rows = [
     ["버전", `v${VERSION}`],
     ["provider", cfg.provider],
     ["model", cfg.model],
+    ...(cfg.base_url ? [["엔드포인트", cfg.base_url]] : []),
     ["API 키", keySource],
     ["교육 모드", cfg.teach_mode ? c.green("ON (과정 펼쳐보기)") : "OFF"],
     ["스트리밍", cfg.stream ? c.green("ON (실시간)") : "OFF"],
@@ -236,6 +243,7 @@ function printHelp() {
         `시키고 싶은 일을 한국어로 입력하세요. 예) ${c.cyan("notes.txt 맨 아래에 할 일 3개 추가해줘")}`,
         "",
         c.bold("슬래시 명령"),
+        `  ${c.cyan("/about")}    이 도구 정보(made by CDSA)`,
         `  ${c.cyan("/setup")}    제공자·API 키·모델 연결(대화형)`,
         `  ${c.cyan("/provider")} <openai|anthropic|openrouter|mock> 제공자 변경`,
         `  ${c.cyan("/model")} <이름>   모델 변경`,
@@ -483,6 +491,18 @@ export async function main(argv = []) {
 
     if (["/quit", "/exit", "quit", "exit", ":q"].includes(low)) break;
     if (low === "/help") { printHelp(); continue; }
+    if (low === "/about") {
+      console.log(panel([
+        c.bold("CDSA Harness") + c.grey(`  v${VERSION}`),
+        c.dim("AI 에이전트가 내부에서 무슨 일을 하는지 단계별로 드러내는 공개 교육용 하네스."),
+        "",
+        `${c.grey("made by")}  ${c.cyan(c.bold("CDSA"))}`,
+        `${c.grey("npm")}      npm i -g cdsa-harness`,
+        `${c.grey("repo")}     github.com/cdsassj00/miniharness`,
+        `${c.grey("license")}  MIT · 의존성 0개(Node 18+)`,
+      ], { title: "ℹ️  about", color: "cyan" }));
+      continue;
+    }
     if (low === "/reset") { loop.reset(); console.log(c.green("컨텍스트를 초기화했습니다.")); continue; }
     if (low === "/config") { printIntro(cfg); console.log(c.dim(`config.json: ${configPath()}`)); continue; }
     if (low === "/sessions") { console.log(c.dim(`세션 로그: ${sessionsDir()}`)); continue; }

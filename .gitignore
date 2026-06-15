@@ -24,3 +24,7 @@ Thumbs.db
 node_modules/
 npm-debug.log*
 package-lock.json
+
+# 단일 실행파일 빌드 산출물(잔여물) — exe 는 GitHub Release 로 배포
+node-cli/dist/
+*.blob

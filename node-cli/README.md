@@ -18,12 +18,30 @@
 
 ---
 
-## 설치 / 실행
+## 설치 / 실행 — 둘 중 하나 선택
 
+### 방법 1) Node.js + npm (개발자·일반)
+Node 18+ 가 있으면:
 ```bash
 npx cdsa-harness                 # 설치 없이 즉시 (키 없으면 mock)
 npm install -g cdsa-harness      # 전역 설치 → 'cdsa-harness' / 'cdsa'
 ```
+
+### 방법 2) 단일 실행파일 다운로드 (Node 불필요 · 폐쇄망)
+**Node 설치 없이** 파일 하나만 받아 실행합니다. 공공/폐쇄망에 적합.
+1. [Releases](https://github.com/cdsassj00/miniharness/releases) 에서 OS 에 맞는 파일 다운로드
+   - Windows: `cdsa-harness-win.exe`
+   - macOS: `cdsa-harness-macos`
+   - Linux: `cdsa-harness-linux`
+2. 실행:
+   ```bash
+   # Windows (PowerShell)
+   .\cdsa-harness-win.exe
+   # macOS / Linux (실행권한 부여 후)
+   chmod +x ./cdsa-harness-linux && ./cdsa-harness-linux
+   ```
+> 이 바이너리는 Node 런타임을 포함(약 100MB+)하므로 Node 설치가 필요 없습니다.
+> 내장 스킬·플러그인(HWPX 포함)도 모두 들어있어 단독 실행됩니다.
 
 ## 실제 AI 연결하기
 

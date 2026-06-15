@@ -1,12 +1,12 @@
 // CDSA Harness TUI 본체 — 터미널 REPL.
 // 핵심 차별점: '교육 모드' — 실제 API 를 붙여도 에이전트 내부에서 벌어지는 일
 // (컨텍스트 구성 → API 요청 → 모델 판단 → 토큰/지연 → 도구 실행 → 결과 되먹임)을 단계별로 드러낸다.
-import { readFileSync } from "node:fs";
 import readline from "node:readline/promises";
 import path from "node:path";
 import { stdin, stdout } from "node:process";
 
 import { renderBanner } from "./banner.js";
+import { VERSION } from "./builtins.js";
 import {
   ENV_KEYS,
   PROVIDERS,
@@ -26,11 +26,7 @@ import { loadSkills, renderSkill } from "./skills.js";
 import { Toolbox } from "./tools.js";
 import { c, panel, renderDiff } from "./ui.js";
 
-// 버전은 package.json 에서 읽어 항상 일치시킨다(수동 동기화 불필요).
-let VERSION = "0.0.0";
-try {
-  VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
-} catch { /* 기본값 유지 */ }
+// VERSION 은 src/builtins.js(생성물)에서 가져온다 — npm/exe 양쪽에서 동일.
 
 const STEP_STYLE = {
   [Step.USER_INPUT]: ["🧑", "cyan"],
@@ -575,6 +571,7 @@ export async function main(argv = []) {
       const names = Object.keys(skills).sort();
       const srcTag = (s) => {
         const src = s.source || "";
+        if (src === "(내장)") return c.dim("⭐ 내장");
         if (src === "(npm)") return c.dim("📦 npm");
         if (src.includes(`${path.sep}.claude${path.sep}`)) return c.dim("🟣 claude");
         if (src.includes(`${path.sep}.opencode${path.sep}`)) return c.dim("🟠 opencode");

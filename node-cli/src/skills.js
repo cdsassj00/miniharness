@@ -10,13 +10,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-// 패키지에 동봉된 기본(내장) 스킬 폴더 — 설치하면 누구에게나 딸려온다.
-function builtinSkillsDir() {
-  const here = path.dirname(fileURLToPath(import.meta.url)); // .../<pkg>/src
-  return path.resolve(here, "..", "skills"); // .../<pkg>/skills
-}
+import { BUILTIN_SKILLS } from "./builtins.js";
 
 // 스킬 폴더 목록. 순서 = 우선순위(먼저 발견된 것이 이김).
 //  - importForeign: 다른 코딩 에이전트(Claude Code/OpenCode 등)의 커맨드 폴더도 읽기
@@ -40,7 +35,6 @@ export function skillDirs(workspace, importForeign = true, extraDirs = []) {
     ...(importForeign ? projectForeign : []), // 프로젝트의 외부 포맷
     path.join(home, ".cdsa_harness", "skills"), // 우리 전역
     ...(importForeign ? globalForeign : []), // 전역 외부 포맷(개인 커맨드 라이브러리)
-    builtinSkillsDir(), // 패키지 내장 기본(가장 마지막 = 사용자 것이 덮어씀)
   ];
 }
 
@@ -92,6 +86,10 @@ export function loadSkills(workspace, { importForeign = true, extraDirs = [] } =
         if (fs.existsSync(skillMd)) addSkill(skills, e, skillMd);
       }
     }
+  }
+  // 패키지 내장 기본 스킬(임베드) — 가장 낮은 우선순위(사용자 파일이 덮어씀)
+  for (const s of BUILTIN_SKILLS) {
+    if (!skills[s.name]) skills[s.name] = { name: s.name, description: s.description || "", body: s.body, source: "(내장)" };
   }
   return skills;
 }

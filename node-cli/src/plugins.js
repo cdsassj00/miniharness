@@ -15,22 +15,18 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-// 패키지에 동봉된 기본(내장) 플러그인 폴더 — 설치하면 누구에게나 딸려온다.
-function builtinPluginsDir() {
-  const here = path.dirname(fileURLToPath(import.meta.url)); // .../<pkg>/src
-  return path.resolve(here, "..", "plugins"); // .../<pkg>/plugins
-}
+import { BUILTIN_PLUGINS } from "./builtins.js";
 
 export function pluginDirs(workspace) {
   return [
-    builtinPluginsDir(), // 내장 기본(가장 먼저)
     path.join(os.homedir(), ".cdsa_harness", "plugins"),
     path.join(workspace, ".cdsa", "plugins"),
   ];
 }
 
 export async function loadPlugins(workspace) {
-  const plugins = [];
+  // 패키지 내장 기본 플러그인(임베드) 먼저, 그다음 디스크의 사용자 플러그인.
+  const plugins = [...BUILTIN_PLUGINS.map((p) => ({ ...p, source: "(내장)" }))];
   for (const dir of pluginDirs(workspace)) {
     let files = [];
     try {
@@ -156,7 +152,12 @@ export async function scanNodeModules(nmDir) {
 // cwd 의 node_modules + cdsa-harness 자신의 node_modules(전역 설치 시 형제 패키지) 를 훑고,
 // config.plugins 에 적힌 패키지는 이름 규칙과 무관하게 강제로 불러온다.
 export async function discoverNpmExtensions(cwd, explicitNames = []) {
-  const here = path.dirname(fileURLToPath(import.meta.url));
+  let here = cwd;
+  try {
+    here = path.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    /* 번들/SEA 환경 등 import.meta.url 사용 불가 시 무시 */
+  }
   const nmDirs = [];
   const add = (d) => {
     const r = path.resolve(d);

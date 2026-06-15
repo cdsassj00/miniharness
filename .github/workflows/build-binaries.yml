@@ -1,0 +1,61 @@
+name: Build standalone binaries
+
+# Node 없이 실행되는 단일 실행파일을 Windows/macOS/Linux 용으로 빌드해
+# GitHub Release 에 첨부한다. (사용자는 exe/바이너리만 내려받아 실행)
+#
+# 트리거: Release 발행 시 자동 + 수동 실행
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: cdsa-harness-linux
+            bin: cdsa-harness
+          - os: macos-latest
+            artifact: cdsa-harness-macos
+            bin: cdsa-harness
+          - os: windows-latest
+            artifact: cdsa-harness-win.exe
+            bin: cdsa-harness.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: node-cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install build deps
+        run: npm install
+
+      - name: Run tests
+        run: node --test
+
+      - name: Build single-file binary
+        run: node scripts/build-exe.mjs
+
+      - name: Rename artifact
+        shell: bash
+        run: cp "node-cli/dist/${{ matrix.bin }}" "${{ matrix.artifact }}"
+        working-directory: .
+
+      - name: Upload as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact }}

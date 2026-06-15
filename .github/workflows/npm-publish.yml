@@ -2,9 +2,8 @@ name: Publish CDSA Harness to npm
 
 # node-cli/ 의 CDSA Harness 를 npm 에 퍼블리시한다.
 # 트리거:
-#   1) 버전 태그(v*) push 시 자동 퍼블리시  ← 가장 간단
-#   2) GitHub 에서 Release 를 발행하면 자동 퍼블리시
-#   3) Actions 탭에서 수동 실행(workflow_dispatch)
+#   1) GitHub 에서 Release 를 발행하면 자동 퍼블리시
+#   2) Actions 탭에서 수동 실행(workflow_dispatch)
 #
 # 사전 준비(1회):
 #   - npmjs.com 에서 'Automation' 타입 Access Token 발급
@@ -12,8 +11,6 @@ name: Publish CDSA Harness to npm
 #     NPM_TOKEN 이라는 이름으로 토큰 등록
 
 on:
-  push:
-    tags: ["v*"]
   release:
     types: [published]
   workflow_dispatch:

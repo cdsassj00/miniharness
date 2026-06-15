@@ -45,22 +45,15 @@ const seaConfig = {
 fs.writeFileSync(path.join(dist, "sea-config.json"), JSON.stringify(seaConfig, null, 2));
 run(process.execPath, ["--experimental-sea-config", path.join(dist, "sea-config.json")]);
 
-// 4) node 바이너리 복사 후 blob 주입(postject)
+// 4) node 바이너리 복사 후 blob 주입(postject JS API — npx 스폰 없이 크로스플랫폼 안정)
 fs.copyFileSync(process.execPath, exePath);
 if (!isWin) fs.chmodSync(exePath, 0o755);
 
-const postjectArgs = [
-  "postject",
-  exePath,
-  "NODE_SEA_BLOB",
-  path.join(dist, "sea-prep.blob"),
-  "--sentinel-fuse",
-  FUSE,
-];
-if (isMac) postjectArgs.push("--macho-segment-name", "NODE_SEA");
-
-const npx = isWin ? "npx.cmd" : "npx";
-run(npx, ["--no-install", ...postjectArgs]);
+const { inject } = await import("postject");
+await inject(exePath, "NODE_SEA_BLOB", fs.readFileSync(path.join(dist, "sea-prep.blob")), {
+  sentinelFuse: FUSE,
+  machoSegmentName: isMac ? "NODE_SEA" : undefined,
+});
 
 console.log(`\n✅ 단일 실행파일 생성: ${exePath}`);
 console.log(`   실행 예: ${isWin ? "dist\\cdsa-harness.exe" : "./dist/cdsa-harness"} --help`);

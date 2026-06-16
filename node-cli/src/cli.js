@@ -247,8 +247,43 @@ function printIntro(cfg) {
   const lines = rows.map(([k, v]) => `${c.grey(k.padEnd(9))}  ${c.bold(v)}`);
   console.log(panel(lines, { title: "⚙️  CDSA Harness 설정", color: "cyan" }));
   console.log(
+    c.bold(c.cyan("👉 처음이세요?  /guide ")) + c.dim("입력하면 빠른 시작 안내가 떠요.")
+  );
+  console.log(
     c.dim("명령: ") +
-      `${c.cyan("/setup")} 연결 · ${c.cyan("/teach")} 교육모드 · ${c.cyan("/context")} 컨텍스트 · ${c.cyan("/help")} 도움말 · ${c.cyan("/quit")} 종료\n`
+      `${c.cyan("/setup")} 연결 · ${c.cyan("/skills")} 명령목록 · ${c.cyan("/teach")} 교육모드 · ${c.cyan("/help")} 도움말 · ${c.cyan("/quit")} 종료\n`
+  );
+}
+
+function printGuide() {
+  console.log(
+    panel(
+      [
+        c.bold("CDSA Harness 에 오신 걸 환영해요!") + c.dim("  AI 에게 일을 시키고, 그 과정을 눈으로 보는 도구예요."),
+        "",
+        c.bold("🚀 3단계면 끝"),
+        `  ${c.cyan("1) AI 연결")}   ${c.bold("/setup")} 입력 → OpenAI·Claude·OpenRouter 중 선택 + 키 입력`,
+        `              ${c.dim("키가 없어도 OK — 자동 '연습(mock)' 모드로 흐름을 체험할 수 있어요.")}`,
+        `  ${c.cyan("2) 시키기")}    하고 싶은 일을 ${c.bold("한국어로 그냥 입력")}`,
+        `              예) ${c.green("notes.txt 에 오늘 할 일 3개 추가해줘")}`,
+        `  ${c.cyan("3) 승인")}      파일을 고칠 땐 ${c.bold("바뀔 내용(diff)")} 을 먼저 보여줘요 → ${c.green("y")} 누르면 적용`,
+        "",
+        c.bold("💡 알아두면 좋은 명령"),
+        `  ${c.cyan("/skills")}    쓸 수 있는 명령 목록(민원분류·요약 등)`,
+        `  ${c.cyan("/workspace")} 작업할 폴더 보기/바꾸기  (${c.dim("/workspace . = 지금 폴더")})`,
+        `  ${c.cyan("/teach")}     AI 내부 동작 펼쳐보기 켜기/끄기`,
+        `  ${c.cyan("/about")}     이 도구 정보 · ${c.cyan("/help")} 전체 도움말 · ${c.cyan("/quit")} 종료`,
+        "",
+        c.bold("🇰🇷 공공 업무 예시 (바로 써보기)"),
+        `  ${c.green("/minwon")} (민원 내용 붙여넣기)   → 분류·담당부서·처리방향`,
+        `  ${c.green("/gongmun")} 도서관 행사 안내       → 공문 기안 초안`,
+        `  ${c.green("/privacy")} report.txt            → 개인정보 점검`,
+        `  ${c.green("/hwpx")} 보고서.hwpx              → 한컴 문서 요약`,
+        "",
+        c.dim("막히면 언제든 /help 를 입력하세요. 즐겁게 써보세요! 😊"),
+      ],
+      { title: "📖 빠른 시작 가이드 (/guide)", color: "cyan" }
+    )
   );
 }
 
@@ -260,6 +295,7 @@ function printHelp() {
         `시키고 싶은 일을 한국어로 입력하세요. 예) ${c.cyan("notes.txt 맨 아래에 할 일 3개 추가해줘")}`,
         "",
         c.bold("슬래시 명령"),
+        `  ${c.cyan("/guide")}    처음 사용자용 빠른 시작 안내`,
         `  ${c.cyan("/about")}    이 도구 정보(made by CDSA)`,
         `  ${c.cyan("/setup")}    제공자·API 키·모델 연결(대화형)`,
         `  ${c.cyan("/provider")} <openai|anthropic|openrouter|mock> 제공자 변경`,
@@ -492,6 +528,7 @@ export async function main(argv = []) {
 
     if (["/quit", "/exit", "quit", "exit", ":q"].includes(low)) break;
     if (low === "/help") { printHelp(); continue; }
+    if (low === "/guide" || low === "/start" || low === "/tutorial") { printGuide(); continue; }
     if (low === "/about") {
       console.log(panel([
         c.bold("CDSA Harness") + c.grey(`  v${VERSION}`),

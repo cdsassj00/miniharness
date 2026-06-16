@@ -197,6 +197,44 @@ function makeApproval(ask) {
   };
 }
 
+function isNewer(a, b) {
+  const pa = String(a).split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return true;
+    if ((pa[i] || 0) < (pb[i] || 0)) return false;
+  }
+  return false;
+}
+
+// 시작 시 새 버전 확인(하루 1회, 네트워크 실패는 조용히 무시 → 폐쇄망 안전).
+async function maybeCheckUpdate(cfg) {
+  if (cfg.update_check === false) return null;
+  const stamp = path.join(configDir(), ".update_check");
+  try {
+    if (Date.now() - Number(fs.readFileSync(stamp, "utf8")) < 24 * 3600 * 1000) return null;
+  } catch {
+    /* 첫 확인 */
+  }
+  try {
+    fs.mkdirSync(configDir(), { recursive: true });
+    fs.writeFileSync(stamp, String(Date.now())); // 결과와 무관하게 하루 1회로 제한
+  } catch {
+    /* ignore */
+  }
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 1500);
+    const res = await fetch("https://registry.npmjs.org/cdsa-harness/latest", { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const latest = (await res.json()).version;
+    return latest && isNewer(latest, VERSION) ? latest : null;
+  } catch {
+    return null;
+  }
+}
+
 // 작업 폴더 기준으로 플러그인·스킬·도구상자를 구성한다(시작 시 + /workspace 변경 시).
 async function buildExtensions(cfg, mcp) {
   const filePlugins = await loadPlugins(cfg.workspacePath());
@@ -539,6 +577,16 @@ export async function main(argv = []) {
 
   printIntro(cfg);
 
+  // 새 버전 안내(있을 때만, 하루 1회)
+  const newer = await maybeCheckUpdate(cfg);
+  if (newer) {
+    console.log(
+      c.yellow(`⬆️  새 버전 v${newer} 가 나왔어요!`) +
+        c.dim(`  업데이트: npm i -g cdsa-harness@latest  ·  exe 는 Releases 에서 새로 받기`) +
+        "\n"
+    );
+  }
+
   // ③ MCP 서버(다른 에이전트와 공용 표준) 연결 — 1회
   if (cfg.mcpServers && Object.keys(cfg.mcpServers).length) {
     process.stdout.write(c.dim("MCP 서버 연결 중...\r"));
@@ -578,10 +626,37 @@ export async function main(argv = []) {
 
   const rule = () => console.log(c.grey("─".repeat(Math.min(80, stdout.columns || 80))));
 
-  // 첫 실행이면 튜토리얼을 권한다(한 번만 — ~/.cdsa_harness/.welcomed 표시).
+  // 첫 실행 온보딩(한 번만 — ~/.cdsa_harness/.welcomed 표시): 작업 폴더 설정 + 튜토리얼
   const markerPath = path.join(configDir(), ".welcomed");
   if (stdin.isTTY && !fs.existsSync(markerPath)) {
-    const a = await ask(c.cyan("처음 오셨네요! 👋 짧은 튜토리얼을 볼까요? [Y/n] "));
+    console.log(panel(
+      [
+        "AI 가 파일을 다룰 ‘작업 폴더’를 정하세요.",
+        c.dim("이 폴더 밖은 절대 건드리지 않아요(안전장치)."),
+        "",
+        `  ${c.bold("엔터")}  기본값 ${c.cyan("./workspace")} (하위 폴더 자동 생성)`,
+        `  ${c.bold(".")}     지금 이 폴더를 그대로 사용`,
+        `  ${c.bold("경로")}  예) ${c.cyan("./문서")} 또는 ${c.cyan("C:\\작업\\프로젝트")}`,
+      ],
+      { title: "📁 작업 폴더 설정 (처음 한 번)", color: "cyan" }
+    ));
+    const wsAns = await ask(c.cyan("작업 폴더 [엔터=기본]: "));
+    if (wsAns !== null && wsAns.trim()) {
+      cfg.workspace = wsAns.trim();
+      const rebuilt = await buildExtensions(cfg, mcp);
+      toolbox = rebuilt.toolbox;
+      skills = rebuilt.skills;
+      loop.toolbox = toolbox;
+      loop.reset();
+    }
+    try {
+      saveConfig(cfg);
+    } catch {
+      /* 저장 실패 무시 */
+    }
+    console.log(c.green(`작업 폴더: ${cfg.workspacePath()}`) + c.dim("  (나중에 /workspace 로 변경 가능)\n"));
+
+    const a = await ask(c.cyan("짧은 튜토리얼을 볼까요? [Y/n] "));
     if (a !== null && ["", "y", "yes"].includes(a.trim().toLowerCase())) await runTutorial(ask);
     try {
       fs.mkdirSync(configDir(), { recursive: true });

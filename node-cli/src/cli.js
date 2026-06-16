@@ -195,6 +195,27 @@ function makeApproval(ask) {
   };
 }
 
+// 작업 폴더 기준으로 플러그인·스킬·도구상자를 구성한다(시작 시 + /workspace 변경 시).
+async function buildExtensions(cfg, mcp) {
+  const filePlugins = await loadPlugins(cfg.workspacePath());
+  const npm = await discoverNpmExtensions(process.cwd(), cfg.plugins || []);
+  const plugins = [
+    ...filePlugins,
+    ...npm.plugins,
+    ...mcp.tools,
+    ...npm.errors.map((e) => ({ error: e })),
+    ...mcp.errors.map((e) => ({ error: `MCP ${e}` })),
+  ];
+  const skills = {};
+  for (const s of npm.skills) skills[s.name] = { name: s.name, description: s.description || "", body: s.body, source: "(npm)" };
+  Object.assign(
+    skills,
+    loadSkills(cfg.workspacePath(), { importForeign: cfg.import_foreign_skills, extraDirs: cfg.skill_dirs || [] })
+  ); // 로컬 파일 스킬이 우선
+  const toolbox = new Toolbox(cfg.workspacePath(), cfg.allow_shell, plugins);
+  return { toolbox, skills };
+}
+
 function makeClient(cfg) {
   return new LLMClient({
     provider: cfg.provider,
@@ -246,6 +267,7 @@ function printHelp() {
         `  ${c.cyan("/teach")}    교육 모드 켜기/끄기(내부 과정 펼쳐보기)`,
         `  ${c.cyan("/stream")}   실시간 스트리밍 출력 켜기/끄기`,
         `  ${c.cyan("/context")}  지금 모델에 보내는 컨텍스트 들여다보기`,
+        `  ${c.cyan("/workspace")} <폴더>  작업 폴더 보기/변경 ('.' = 현재 폴더)`,
         `  ${c.cyan("/skills")}   스킬 목록(.cdsa/skills 의 /명령들)`,
         `  ${c.cyan("/plugins")}  플러그인 목록(파일·npm 추가 도구)`,
         `  ${c.cyan("/mcp")}      연결된 MCP 서버/도구(다른 에이전트와 공용)`,
@@ -422,30 +444,13 @@ export async function main(argv = []) {
 
   printIntro(cfg);
 
-  // 플러그인(추가 도구)·스킬(프롬프트 템플릿)을 불러온다:
-  //   ① 파일: .cdsa/plugins · .cdsa/skills (작업폴더/홈)
-  //   ② npm 패키지: cdsa-harness-plugin-* 자동 발견 + config.plugins 강제 로드
-  const filePlugins = await loadPlugins(cfg.workspacePath());
-  const npm = await discoverNpmExtensions(process.cwd(), cfg.plugins || []);
-  // ③ MCP 서버(다른 에이전트와 공용 표준)의 도구도 플러그인처럼 등록
+  // ③ MCP 서버(다른 에이전트와 공용 표준) 연결 — 1회
   if (cfg.mcpServers && Object.keys(cfg.mcpServers).length) {
     process.stdout.write(c.dim("MCP 서버 연결 중...\r"));
     mcp = await connectMcpServers(cfg.mcpServers);
   }
-  const plugins = [
-    ...filePlugins,
-    ...npm.plugins,
-    ...mcp.tools,
-    ...npm.errors.map((e) => ({ error: e })),
-    ...mcp.errors.map((e) => ({ error: `MCP ${e}` })),
-  ];
-  const skills = {};
-  for (const s of npm.skills) skills[s.name] = { name: s.name, description: s.description || "", body: s.body, source: "(npm)" };
-  Object.assign(
-    skills,
-    loadSkills(cfg.workspacePath(), { importForeign: cfg.import_foreign_skills, extraDirs: cfg.skill_dirs || [] })
-  ); // 로컬 파일 스킬이 우선
-  const toolbox = new Toolbox(cfg.workspacePath(), cfg.allow_shell, plugins);
+  // 플러그인·스킬·도구상자를 작업 폴더 기준으로 구성(작업 폴더 변경 시 재사용)
+  let { toolbox, skills } = await buildExtensions(cfg, mcp);
   if (toolbox.plugins.length || Object.keys(skills).length || toolbox.pluginErrors.length || mcp.servers.length) {
     const bits = [];
     if (toolbox.plugins.length) bits.push(c.green(`도구 +${toolbox.plugins.length}개`));
@@ -501,6 +506,25 @@ export async function main(argv = []) {
     }
     if (low === "/reset") { loop.reset(); console.log(c.green("컨텍스트를 초기화했습니다.")); continue; }
     if (low === "/config") { printIntro(cfg); console.log(c.dim(`config.json: ${configPath()}`)); continue; }
+    if (low.startsWith("/workspace") || low.startsWith("/cd")) {
+      const arg = user.split(/\s+/).slice(1).join(" ").trim();
+      if (!arg) {
+        console.log(c.dim(`현재 작업 폴더: ${cfg.workspacePath()}`));
+        console.log(c.dim("변경: /workspace <폴더경로>   (현재 폴더 그대로: /workspace .)"));
+        continue;
+      }
+      cfg.workspace = arg;
+      const rebuilt = await buildExtensions(cfg, mcp);
+      toolbox = rebuilt.toolbox;
+      skills = rebuilt.skills;
+      loop.toolbox = toolbox;
+      loop.reset();
+      console.log(
+        c.green(`작업 폴더 변경 → ${cfg.workspacePath()}`) +
+          c.dim(`  (도구 ${toolbox.plugins.length} · 스킬 ${Object.keys(skills).length})`)
+      );
+      continue;
+    }
     if (low === "/sessions") { console.log(c.dim(`세션 로그: ${sessionsDir()}`)); continue; }
     if (low === "/teach") {
       cfg.teach_mode = !cfg.teach_mode;

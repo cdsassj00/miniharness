@@ -2,7 +2,7 @@
 // 스킬/플러그인/버전을 바꾼 뒤 `node scripts/gen-builtins.mjs` 로 재생성하세요.
 import p0 from "../plugins/hwpx_read.mjs";
 
-export const VERSION = "0.11.1";
+export const VERSION = "0.12.0";
 
 export const BUILTIN_PLUGINS = [p0];
 

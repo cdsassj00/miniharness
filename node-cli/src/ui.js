@@ -1,10 +1,17 @@
 // 터미널 출력 헬퍼: ANSI 색, 박스 패널, diff 렌더. (외부 의존성 없음)
 
 const ESC = "\x1b[";
-const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+// 런타임에 켜고 끌 수 있다(/color, --no-color). 기본은 TTY + NO_COLOR 미설정.
+let colorEnabled = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
+export function setColor(on) {
+  colorEnabled = Boolean(on);
+}
+export function isColorOn() {
+  return colorEnabled;
+}
 
 function wrap(open, close) {
-  return (s) => (useColor ? `${ESC}${open}m${s}${ESC}${close}m` : String(s));
+  return (s) => (colorEnabled ? `${ESC}${open}m${s}${ESC}${close}m` : String(s));
 }
 
 export const c = {
@@ -22,7 +29,7 @@ export const c = {
 
 // 24bit truecolor (그라데이션 배너용). hex "#rrggbb"
 export function hex(s, hexColor) {
-  if (!useColor) return String(s);
+  if (!colorEnabled) return String(s);
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hexColor);
   if (!m) return String(s);
   const [r, g, b] = [m[1], m[2], m[3]].map((x) => parseInt(x, 16));

@@ -42,6 +42,7 @@ const DEFAULTS = {
   stream: true, // 모델 응답을 실시간(토큰 단위)으로 출력
   import_foreign_skills: true, // .claude/commands 등 외부 포맷 스킬도 읽기(프로젝트+전역)
   skill_dirs: [], // 스킬을 추가로 읽어올 폴더(절대/상대 경로)
+  no_color: false, // 색상 끄기(흑백)
   plugins: [], // 추가로 불러올 npm 플러그인 패키지 이름(이름 규칙과 무관하게 강제 로드)
   mcpServers: {}, // MCP 서버 설정 (Claude Code/Cursor 와 동일한 형식)
 };

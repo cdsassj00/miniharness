@@ -68,6 +68,9 @@ export OPENROUTER_API_KEY=sk-or-...
 
 | 명령 | 설명 |
 |------|------|
+| `/guide` · `/tutorial` | 빠른 시작 안내 · 단계별 인터랙티브 튜토리얼 |
+| `/workspace <폴더>` | 작업 폴더 보기/변경 (`.` = 현재 폴더) |
+| `/color` | 색상 켜기/끄기(흑백) |
 | `/setup` | 제공자·API 키·모델 대화형 연결 |
 | `/provider <이름>` | openai · anthropic · openrouter · mock 전환 |
 | `/model <이름>` | 모델 변경 |
@@ -153,7 +156,7 @@ export default {
 - **기본 내장 스킬**(설치하면 누구에게나 제공):
   - 실용: `/explain` 쉽게 설명 · `/review` 코드 리뷰 · `/summarize` 3줄 요약 · `/tour` 프로젝트 브리핑 · `/todo` 미완성(TODO) 수집 · `/plan` 실행 전 계획만
   - 교육/재미: `/eli5` 5살도 알게 · `/rubberduck` 질문으로 디버깅 · `/quiz` 학습 퀴즈 · `/haiku` 하이쿠 · `/loop` 이 요청을 에이전트 루프로 어떻게 처리할지 해설
-  - **🇰🇷 공공(대한민국)**: `/minwon` 민원분류 · `/gongmun` 공문 기안 · `/privacy` 개인정보 점검 · `/press` 보도자료 · `/report` 개조식 보고 · `/minutes` 회의록 · `/policyqa` 정책 Q&A · `/hwpx` 한컴 문서 요약
+  - **🇰🇷 공공(대한민국)**: `/minwon` 민원분류 · `/gongmun` 공문 기안 · `/privacy` 개인정보 점검 · `/press` 보도자료 · `/report` 개조식 보고 · `/minutes` 회의록 · `/insa` 인사발령 · `/budget` 예산 검토 · `/notice` 공고문 · `/answer` 민원답변 · `/briefing` 보도협조 · `/policyqa` 정책 Q&A · `/hwpx` 한컴 문서 요약
 
 ## 🇰🇷 공공 특화 + HWPX
 

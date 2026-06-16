@@ -1,6 +1,6 @@
 {
   "name": "cdsa-harness",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "AI 에이전트의 내부 동작을 단계별로 드러내는 교육용 터미널 하네스. 실시간 스트리밍 + OpenAI/Claude/OpenRouter + MCP + npm 플러그인·크로스포맷 스킬.",
   "type": "module",
   "bin": {

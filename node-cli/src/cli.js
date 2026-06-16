@@ -1,6 +1,7 @@
 // CDSA Harness TUI 본체 — 터미널 REPL.
 // 핵심 차별점: '교육 모드' — 실제 API 를 붙여도 에이전트 내부에서 벌어지는 일
 // (컨텍스트 구성 → API 요청 → 모델 판단 → 토큰/지연 → 도구 실행 → 결과 되먹임)을 단계별로 드러낸다.
+import fs from "node:fs";
 import readline from "node:readline/promises";
 import path from "node:path";
 import { stdin, stdout } from "node:process";
@@ -11,6 +12,7 @@ import {
   ENV_KEYS,
   PROVIDERS,
   SUGGESTED_MODELS,
+  configDir,
   configPath,
   loadConfig,
   saveConfig,
@@ -24,7 +26,7 @@ import { discoverNpmExtensions, loadPlugins } from "./plugins.js";
 import { SessionLog, sessionsDir } from "./session.js";
 import { loadSkills, renderSkill } from "./skills.js";
 import { Toolbox } from "./tools.js";
-import { c, panel, renderDiff } from "./ui.js";
+import { c, panel, renderDiff, setColor } from "./ui.js";
 
 // VERSION 은 src/builtins.js(생성물)에서 가져온다 — npm/exe 양쪽에서 동일.
 
@@ -287,6 +289,57 @@ function printGuide() {
   );
 }
 
+// 인터랙티브 튜토리얼 — 엔터로 한 페이지씩 진행(첫 실행 시 자동 제안).
+async function runTutorial(ask) {
+  const pages = [
+    [
+      "👋 환영합니다! CDSA Harness 가 처음이라면 이 튜토리얼이 딱이에요.",
+      "",
+      "이 도구는 'AI 에이전트'예요. 일을 시키면 AI 가 스스로 파일을 보고·읽고·고치며 일합니다.",
+      "그 모든 과정을 화면에 단계별로 보여줘서, 보면서 배울 수 있어요.",
+    ],
+    [
+      c.bold("1단계. AI 연결"),
+      "",
+      `${c.cyan("/setup")} 을 입력하면 OpenAI·Claude·OpenRouter 중 고르고 API 키를 넣어요.`,
+      "키가 없어도 괜찮아요 — 자동 '연습(mock)' 모드로 흐름을 그대로 체험할 수 있어요.",
+    ],
+    [
+      c.bold("2단계. 그냥 시키기"),
+      "",
+      "하고 싶은 일을 한국어로 입력하면 됩니다. 예를 들면:",
+      `  ${c.green("notes.txt 에 오늘 할 일 3개 추가해줘")}`,
+      `  ${c.green("이 폴더에 어떤 파일이 있는지 알려줘")}`,
+    ],
+    [
+      c.bold("3단계. 승인 [y/N]"),
+      "",
+      "AI 가 파일을 고치려 하면, 바뀔 내용(diff)을 먼저 보여줍니다.",
+      `${c.green("y")} 를 누르면 적용, ${c.red("n")} 이면 취소. → 위험한 일은 항상 사람이 확인해요(안전장치).`,
+    ],
+    [
+      c.bold("알아두면 좋은 명령"),
+      `  ${c.cyan("/guide")} 빠른 요약 · ${c.cyan("/skills")} 명령 목록 · ${c.cyan("/workspace")} 작업 폴더`,
+      `  ${c.cyan("/teach")} 내부 펼쳐보기 · ${c.cyan("/help")} 전체 · ${c.cyan("/quit")} 종료`,
+      "",
+      c.bold("🇰🇷 공공 업무도 바로"),
+      `  ${c.green("/minwon")} 민원분류 · ${c.green("/gongmun")} 공문 · ${c.green("/privacy")} 개인정보점검 · ${c.green("/hwpx")} 한컴요약`,
+      "",
+      c.dim("이제 끝! 직접 한번 시켜보세요. 막히면 /guide 또는 /help 를 입력하면 돼요 😊"),
+    ],
+  ];
+  for (let i = 0; i < pages.length; i++) {
+    console.log(panel(pages[i], { title: `📊 튜토리얼  (${i + 1}/${pages.length})`, color: "cyan" }));
+    if (i < pages.length - 1) {
+      const a = await ask(c.dim("  [엔터] 다음 · [q] 그만 "));
+      if (a === null || a.trim().toLowerCase() === "q") {
+        console.log(c.dim("튜토리얼을 건너뜁니다. 언제든 /tutorial 로 다시 볼 수 있어요."));
+        return;
+      }
+    }
+  }
+}
+
 function printHelp() {
   console.log(
     panel(
@@ -296,6 +349,8 @@ function printHelp() {
         "",
         c.bold("슬래시 명령"),
         `  ${c.cyan("/guide")}    처음 사용자용 빠른 시작 안내`,
+        `  ${c.cyan("/tutorial")} 단계별 인터랙티브 튜토리얼`,
+        `  ${c.cyan("/color")}    색상 켜기/끄기(흑백)`,
         `  ${c.cyan("/about")}    이 도구 정보(made by CDSA)`,
         `  ${c.cyan("/setup")}    제공자·API 키·모델 연결(대화형)`,
         `  ${c.cyan("/provider")} <openai|anthropic|openrouter|mock> 제공자 변경`,
@@ -395,6 +450,7 @@ function parseArgs(argv) {
     else if (a === "--setup") out.setup = true;
     else if (a === "--no-teach") out.noTeach = true;
     else if (a === "--no-stream") out.noStream = true;
+    else if (a === "--no-color") out.noColor = true;
     else if (a === "--provider") out.provider = argv[++i];
     else if (a === "--model") out.model = argv[++i];
     else if (a === "--workspace") out.workspace = argv[++i];
@@ -416,6 +472,7 @@ export async function main(argv = []) {
         "  --setup                대화형 연결 설정 실행\n" +
         "  --no-teach             교육 모드 끄고 간결하게\n" +
         "  --no-stream            실시간 스트리밍 끄기\n" +
+        "  --no-color             색상 끄기(흑백)\n" +
         "  --auto                 승인 자동(approval_mode=auto)\n" +
         "  -h, --help             도움말\n\n" +
         "API 키는 환경변수로도 인식됩니다: OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY\n"
@@ -448,6 +505,8 @@ export async function main(argv = []) {
   if (args.auto) cfg.approval_mode = "auto";
   if (args.noTeach) cfg.teach_mode = false;
   if (args.noStream) cfg.stream = false;
+  if (args.noColor) cfg.no_color = true;
+  if (cfg.no_color) setColor(false); // 색상 끄기(흑백)
 
   const rl = readline.createInterface({ input: stdin, output: stdout });
   let session = null;
@@ -519,6 +578,19 @@ export async function main(argv = []) {
 
   const rule = () => console.log(c.grey("─".repeat(Math.min(80, stdout.columns || 80))));
 
+  // 첫 실행이면 튜토리얼을 권한다(한 번만 — ~/.cdsa_harness/.welcomed 표시).
+  const markerPath = path.join(configDir(), ".welcomed");
+  if (stdin.isTTY && !fs.existsSync(markerPath)) {
+    const a = await ask(c.cyan("처음 오셨네요! 👋 짧은 튜토리얼을 볼까요? [Y/n] "));
+    if (a !== null && ["", "y", "yes"].includes(a.trim().toLowerCase())) await runTutorial(ask);
+    try {
+      fs.mkdirSync(configDir(), { recursive: true });
+      fs.writeFileSync(markerPath, new Date().toISOString());
+    } catch {
+      /* 표시 실패는 무시 */
+    }
+  }
+
   while (true) {
     const raw = await ask(c.bold(c.cyan("› ")));
     if (raw === null) break; // Ctrl+D / Ctrl+C / 스트림 종료
@@ -528,7 +600,14 @@ export async function main(argv = []) {
 
     if (["/quit", "/exit", "quit", "exit", ":q"].includes(low)) break;
     if (low === "/help") { printHelp(); continue; }
-    if (low === "/guide" || low === "/start" || low === "/tutorial") { printGuide(); continue; }
+    if (low === "/guide" || low === "/start") { printGuide(); continue; }
+    if (low === "/tutorial") { await runTutorial(ask); continue; }
+    if (low === "/color") {
+      cfg.no_color = !cfg.no_color;
+      setColor(!cfg.no_color);
+      console.log(cfg.no_color ? "색상 끔(흑백)." : c.green("색상 켬."));
+      continue;
+    }
     if (low === "/about") {
       console.log(panel([
         c.bold("CDSA Harness") + c.grey(`  v${VERSION}`),

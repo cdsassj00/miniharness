@@ -1,4 +1,5 @@
 ---
+argument-hint: "<파일명>"
 description: 파일을 읽고 버그 위험·개선점을 리뷰
 ---
 $ARGUMENTS 파일을 read_file 도구로 읽고, 버그 위험·가독성·개선점을 한국어로 짚어줘.

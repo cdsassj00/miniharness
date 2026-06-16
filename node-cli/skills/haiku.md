@@ -1,4 +1,5 @@
 ---
+argument-hint: "<주제 또는 파일명>"
 description: 파일이나 주제로 하이쿠(짧은 3줄 시) 짓기 — 재미용
 ---
 $ARGUMENTS (파일명이면 read_file 로 그 내용을 읽어)를 주제로,

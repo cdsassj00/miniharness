@@ -1,4 +1,5 @@
 ---
+argument-hint: "<예산 내용 또는 파일경로>"
 description: 예산(안) 항목을 검토·요약하고 점검 포인트 제시 [공공]
 ---
 $ARGUMENTS (파일명이면 read_file 로 읽어)의 예산 내용을 한국어로 정리해줘.

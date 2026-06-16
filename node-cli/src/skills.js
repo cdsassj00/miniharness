@@ -44,7 +44,7 @@ function parseFrontmatter(text) {
   const meta = {};
   for (const line of m[1].split("\n")) {
     const i = line.indexOf(":");
-    if (i > 0) meta[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    if (i > 0) meta[line.slice(0, i).trim()] = line.slice(i + 1).trim().replace(/^["']|["']$/g, "");
   }
   return { meta, body: text.slice(m[0].length).trim() };
 }
@@ -54,7 +54,13 @@ function addSkill(skills, name, file) {
   try {
     const raw = fs.readFileSync(file, "utf8");
     const { meta, body } = parseFrontmatter(raw);
-    skills[name] = { name, description: meta.description || "", body, source: file };
+    skills[name] = {
+      name,
+      description: meta.description || "",
+      hint: meta["argument-hint"] || meta.args || meta.usage || "",
+      body,
+      source: file,
+    };
   } catch {
     /* ignore unreadable skill */
   }
@@ -89,7 +95,7 @@ export function loadSkills(workspace, { importForeign = true, extraDirs = [] } =
   }
   // 패키지 내장 기본 스킬(임베드) — 가장 낮은 우선순위(사용자 파일이 덮어씀)
   for (const s of BUILTIN_SKILLS) {
-    if (!skills[s.name]) skills[s.name] = { name: s.name, description: s.description || "", body: s.body, source: "(내장)" };
+    if (!skills[s.name]) skills[s.name] = { name: s.name, description: s.description || "", hint: s.hint || "", body: s.body, source: "(내장)" };
   }
   return skills;
 }

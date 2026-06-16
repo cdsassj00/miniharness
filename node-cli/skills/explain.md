@@ -1,4 +1,5 @@
 ---
+argument-hint: "<파일명 또는 대상>"
 description: 파일/코드를 읽고 비개발자도 알게 쉽게 설명
 ---
 $ARGUMENTS 을(를) read_file 도구로 읽고, 무엇을 하는 코드/문서인지

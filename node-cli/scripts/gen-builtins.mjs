@@ -14,7 +14,7 @@ function parseFrontmatter(text) {
   const meta = {};
   for (const line of m[1].split("\n")) {
     const i = line.indexOf(":");
-    if (i > 0) meta[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    if (i > 0) meta[line.slice(0, i).trim()] = line.slice(i + 1).trim().replace(/^["']|["']$/g, "");
   }
   return { meta, body: text.slice(m[0].length).trim() };
 }
@@ -25,7 +25,7 @@ const skills = [];
 for (const f of fs.existsSync(skillsDir) ? fs.readdirSync(skillsDir).sort() : []) {
   if (!f.endsWith(".md")) continue;
   const { meta, body } = parseFrontmatter(fs.readFileSync(path.join(skillsDir, f), "utf8"));
-  skills.push({ name: f.replace(/\.md$/, ""), description: meta.description || "", body });
+  skills.push({ name: f.replace(/\.md$/, ""), description: meta.description || "", hint: meta["argument-hint"] || "", body });
 }
 
 // 플러그인 파일 수집(정적 import 로 묶이게 한다)

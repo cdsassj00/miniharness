@@ -1,4 +1,5 @@
 ---
+argument-hint: "<요청>"
 description: 이 요청을 '에이전트 루프' 관점에서 어떻게 처리할지 메타 해설 (CDSA 특별)
 ---
 다음 요청을 실제로 수행하기 전에, CDSA Harness 의 에이전트 루프

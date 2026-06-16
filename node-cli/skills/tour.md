@@ -1,4 +1,5 @@
 ---
+argument-hint: "[주제(선택)]"
 description: 작업 폴더를 둘러보고 이 프로젝트가 무엇인지 브리핑
 ---
 작업 폴더를 list_dir 로 살펴보고, 핵심으로 보이는 파일 2~4개를 read_file 로 읽어

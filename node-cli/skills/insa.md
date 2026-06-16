@@ -1,4 +1,5 @@
 ---
+argument-hint: "<인사발령 내용>"
 description: 인사발령 공지문 초안 작성 [공공]
 ---
 "$ARGUMENTS" 내용을 바탕으로 인사발령 공지문 초안을 작성해줘.

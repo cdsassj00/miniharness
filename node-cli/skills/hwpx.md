@@ -1,4 +1,5 @@
 ---
+argument-hint: "<파일.hwpx>"
 description: 한컴 HWPX(.hwpx) 문서를 읽어 핵심을 개조식으로 요약 [공공]
 ---
 $ARGUMENTS 파일을 hwpx_read 도구로 읽어 본문 텍스트를 추출한 뒤,

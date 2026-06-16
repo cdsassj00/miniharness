@@ -247,7 +247,7 @@ async function buildExtensions(cfg, mcp) {
     ...mcp.errors.map((e) => ({ error: `MCP ${e}` })),
   ];
   const skills = {};
-  for (const s of npm.skills) skills[s.name] = { name: s.name, description: s.description || "", body: s.body, source: "(npm)" };
+  for (const s of npm.skills) skills[s.name] = { name: s.name, description: s.description || "", hint: s.hint || "", body: s.body, source: "(npm)" };
   Object.assign(
     skills,
     loadSkills(cfg.workspacePath(), { importForeign: cfg.import_foreign_skills, extraDirs: cfg.skill_dirs || [] })
@@ -796,8 +796,12 @@ export async function main(argv = []) {
         return c.dim("📄 파일");
       };
       const lines = names.length
-        ? names.map((n) => `${c.cyan("/" + n)}  ${c.grey(skills[n].description || "")}  ${srcTag(skills[n])}`)
+        ? names.map((n) => {
+            const h = skills[n].hint ? " " + c.dim(skills[n].hint) : "";
+            return `${c.cyan("/" + n)}${h}  ${c.grey(skills[n].description || "")}  ${srcTag(skills[n])}`;
+          })
         : [c.dim("등록된 스킬이 없습니다.")];
+      lines.unshift(c.dim("사용법: /명령 뒤에  <필수> 또는 [선택] 표기대로 입력하세요."));
       lines.push(c.dim("추가: <작업폴더>/.cdsa/skills/*.md · ~/.cdsa_harness/skills/ · config.json 의 skill_dirs"));
       lines.push(c.dim("외부(.claude/commands 등)는 import_foreign_skills 로 끌 수 있음"));
       console.log(panel(lines, { title: "🎯 스킬 (프롬프트 템플릿, /이름 으로 실행)", color: "cyan" }));
@@ -808,7 +812,14 @@ export async function main(argv = []) {
     if (user.startsWith("/")) {
       const name = low.slice(1).split(/\s+/)[0];
       if (skills[name]) {
-        const argStr = user.split(/\s+/).slice(1).join(" ");
+        const argStr = user.split(/\s+/).slice(1).join(" ").trim();
+        const hint = skills[name].hint || "";
+        // 입력이 필요한 스킬(<...>)인데 비어 있으면, 실행 대신 사용법을 알려준다.
+        if (!argStr && hint.includes("<")) {
+          console.log(c.yellow(`사용법: ${c.bold("/" + name)} ${hint}`) + c.dim("  ← 명령 뒤에 내용을 입력하세요"));
+          if (skills[name].description) console.log(c.dim("  " + skills[name].description));
+          continue;
+        }
         console.log(c.dim(`(스킬 '/${name}' 실행)`));
         rule();
         try {

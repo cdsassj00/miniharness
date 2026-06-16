@@ -1,4 +1,5 @@
 ---
+argument-hint: "<파일명>"
 description: 지정한 파일을 읽고 한국어 3줄로 요약
 ---
 $ARGUMENTS 파일을 read_file 도구로 읽은 다음, 핵심 내용을 한국어 3줄로 요약해줘.

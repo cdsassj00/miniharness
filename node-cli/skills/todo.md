@@ -1,4 +1,5 @@
 ---
+argument-hint: "[대상(선택)]"
 description: 작업 폴더에서 TODO/FIXME 주석을 모아 목록화
 ---
 작업 폴더의 파일들을 list_dir / read_file 로 훑어 TODO, FIXME, XXX, HACK 같은

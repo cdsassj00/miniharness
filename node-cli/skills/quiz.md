@@ -1,4 +1,5 @@
 ---
+argument-hint: "[주제(선택)]"
 description: 작업 폴더 코드/문서로 학습 퀴즈 만들기
 ---
 작업 폴더를 list_dir / read_file 로 살펴보고, 이 코드·문서를 공부할 수 있는

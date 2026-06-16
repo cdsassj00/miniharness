@@ -4,128 +4,240 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>CDSA Harness — AI 에이전트 교육용 하네스</title>
-<meta name="description" content="AI 에이전트가 내부에서 무슨 일을 하는지 단계별로 드러내는 교육용 터미널 하네스. 공공 업무 스킬 내장. made by CDSA." />
+<meta name="description" content="AI 에이전트가 내부에서 무슨 일을 하는지 단계별로 드러내는 교육용 터미널 하네스. 대한민국 공공 업무 스킬 내장. made by CDSA." />
+<meta property="og:title" content="CDSA Harness" />
+<meta property="og:description" content="AI 에이전트의 내부 동작을 단계별로 드러내는 교육용 하네스 · made by CDSA" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=Noto+Serif+KR:wght@500;600;700&display=swap" rel="stylesheet" />
 <style>
-  :root{ --cy:#22d3ee; --bl:#3b82f6; --pp:#8b5cf6; --bg:#0b1020; --bg2:#121830; --fg:#e6e9f2; --mut:#9aa3b8; }
+  :root{
+    --bg:#070b16; --bg-soft:#0c1222; --panel:rgba(255,255,255,.045); --panel-2:rgba(255,255,255,.07);
+    --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.18);
+    --fg:#eef1fa; --mut:#98a4c0; --mut-2:#6f7b97;
+    --cy:#22d3ee; --bl:#5b8cff; --pp:#a855f7;
+    --grad:linear-gradient(100deg,var(--cy),var(--bl) 45%,var(--pp));
+    --serif:"Noto Serif KR",serif; --sans:"Noto Sans KR",system-ui,sans-serif;
+  }
   *{ box-sizing:border-box; }
-  body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif; background:var(--bg); color:var(--fg); line-height:1.7; }
-  a{ color:var(--cy); text-decoration:none; }
-  .wrap{ max-width:920px; margin:0 auto; padding:0 20px; }
-  header{ text-align:center; padding:80px 20px 48px; background:radial-gradient(1200px 400px at 50% -10%, rgba(139,92,246,.25), transparent); }
-  .logo{ font-weight:800; font-size:clamp(34px,7vw,62px); letter-spacing:-1px;
-    background:linear-gradient(90deg,var(--cy),var(--bl),var(--pp)); -webkit-background-clip:text; background-clip:text; color:transparent; }
-  .tag{ color:var(--mut); font-size:18px; margin-top:8px; }
-  .made{ display:inline-block; margin-top:14px; padding:4px 12px; border:1px solid rgba(255,255,255,.15); border-radius:999px; font-size:13px; color:var(--cy); }
-  .btns{ margin-top:28px; display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
-  .btn{ padding:12px 20px; border-radius:10px; font-weight:600; }
-  .btn.p{ background:linear-gradient(90deg,var(--bl),var(--pp)); color:#fff; }
-  .btn.s{ border:1px solid rgba(255,255,255,.2); color:var(--fg); }
-  section{ padding:40px 0; border-top:1px solid rgba(255,255,255,.07); }
-  h2{ font-size:24px; margin:0 0 18px; }
-  .card{ background:var(--bg2); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:20px 22px; margin:14px 0; }
-  code,pre{ font-family:"SF Mono",Menlo,Consolas,monospace; }
-  pre{ background:#0a0e1c; border:1px solid rgba(255,255,255,.1); border-radius:10px; padding:14px 16px; overflow:auto; color:#cde3ff; }
-  .grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
-  .feat b{ color:#fff; }
-  .feat p{ color:var(--mut); margin:6px 0 0; font-size:14px; }
-  .chips{ display:flex; flex-wrap:wrap; gap:8px; }
-  .chip{ background:#0a0e1c; border:1px solid rgba(255,255,255,.12); border-radius:999px; padding:6px 12px; font-size:13px; color:#cfe; }
-  footer{ text-align:center; color:var(--mut); padding:40px 20px 60px; font-size:14px; }
+  html{ scroll-behavior:smooth; }
+  body{ margin:0; font-family:var(--sans); background:var(--bg); color:var(--fg);
+    line-height:1.75; -webkit-font-smoothing:antialiased; overflow-x:hidden; }
+  body::before{ content:""; position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background:
+      radial-gradient(900px 460px at 78% -8%, rgba(168,85,247,.20), transparent 60%),
+      radial-gradient(820px 420px at 12% 4%, rgba(34,211,238,.16), transparent 60%),
+      radial-gradient(700px 700px at 50% 120%, rgba(91,140,255,.12), transparent 60%); }
+  a{ color:inherit; text-decoration:none; }
+  .wrap{ max-width:1060px; margin:0 auto; padding:0 24px; }
+
+  /* nav */
+  nav{ position:sticky; top:0; z-index:20; backdrop-filter:blur(14px);
+    background:rgba(7,11,22,.6); border-bottom:1px solid var(--line); }
+  nav .wrap{ display:flex; align-items:center; justify-content:space-between; height:64px; }
+  .brand{ font-weight:900; letter-spacing:-.3px; font-size:18px;
+    background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .navlinks{ display:flex; gap:26px; font-size:14px; color:var(--mut); }
+  .navlinks a:hover{ color:var(--fg); }
+  @media(max-width:680px){ .navlinks{ display:none; } }
+
+  /* hero */
+  header{ text-align:center; padding:108px 0 72px; }
+  .eyebrow{ font-family:var(--serif); font-weight:500; color:var(--cy); letter-spacing:.18em;
+    font-size:13px; text-transform:uppercase; }
+  h1{ font-weight:900; font-size:clamp(40px,8.4vw,78px); line-height:1.04; letter-spacing:-2px; margin:16px 0 0; }
+  h1 .g{ background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .lead{ font-family:var(--serif); font-weight:500; color:var(--mut); font-size:clamp(17px,2.4vw,21px);
+    max-width:660px; margin:22px auto 0; }
+  .made{ display:inline-flex; align-items:center; gap:8px; margin-top:22px; padding:6px 14px;
+    border:1px solid var(--line-2); border-radius:999px; font-size:13px; color:var(--mut); }
+  .made b{ color:var(--cy); font-weight:700; }
+  .cta{ margin-top:34px; display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+  .btn{ padding:13px 22px; border-radius:12px; font-weight:700; font-size:15px; transition:.22s ease;
+    border:1px solid transparent; }
+  .btn.p{ background:var(--grad); color:#08101f; box-shadow:0 10px 30px -10px rgba(91,140,255,.7); }
+  .btn.p:hover{ transform:translateY(-2px); box-shadow:0 16px 40px -12px rgba(168,85,247,.8); }
+  .btn.s{ border-color:var(--line-2); color:var(--fg); background:var(--panel); }
+  .btn.s:hover{ border-color:var(--cy); transform:translateY(-2px); }
+
+  /* sections */
+  section{ padding:74px 0; }
+  .kicker{ font-family:var(--serif); font-weight:600; font-size:13px; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--cy); }
+  h2{ font-family:var(--serif); font-weight:700; font-size:clamp(26px,4.4vw,38px); letter-spacing:-.6px;
+    margin:10px 0 26px; line-height:1.2; }
+  .sub{ color:var(--mut); margin:-14px 0 26px; max-width:620px; }
+
+  .card{ background:var(--panel); border:1px solid var(--line); border-radius:20px; padding:26px 28px;
+    transition:.25s ease; }
+  .card:hover{ border-color:var(--line-2); background:var(--panel-2); transform:translateY(-3px); }
+  .grid{ display:grid; gap:16px; }
+  .g2{ grid-template-columns:repeat(2,1fr); }
+  .g3{ grid-template-columns:repeat(3,1fr); }
+  @media(max-width:760px){ .g2,.g3{ grid-template-columns:1fr; } }
+
+  pre{ font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace; font-size:13.5px; line-height:1.7;
+    background:#05080f; border:1px solid var(--line); border-radius:14px; padding:16px 18px; overflow:auto;
+    color:#bfe0ff; margin:14px 0 0; }
   .muted{ color:var(--mut); }
+  .pill{ font-family:var(--serif); }
+
+  .feat .ic{ font-size:26px; }
+  .feat b{ display:block; margin-top:10px; font-size:16px; }
+  .feat p{ color:var(--mut); font-size:14px; margin:6px 0 0; }
+
+  .flow{ font-family:"SF Mono",ui-monospace,monospace; color:#cfe; font-size:14px; }
+  .flow b{ color:var(--cy); }
+
+  .chips{ display:flex; flex-wrap:wrap; gap:9px; }
+  .chip{ background:#070c18; border:1px solid var(--line); border-radius:999px; padding:8px 14px;
+    font-size:13.5px; color:#d7e2f7; transition:.2s; }
+  .chip:hover{ border-color:var(--cy); color:#fff; }
+  .chip i{ font-style:normal; color:var(--cy); font-weight:700; }
+
+  .quote{ font-family:var(--serif); font-weight:600; font-size:clamp(20px,3.2vw,28px); line-height:1.55;
+    text-align:center; max-width:780px; margin:0 auto; }
+  .quote .g{ background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
+
+  footer{ border-top:1px solid var(--line); padding:46px 0 64px; text-align:center; color:var(--mut); font-size:14px; }
+  footer a:hover{ color:var(--fg); }
+  footer .fb{ font-weight:900; background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
+
+  .reveal{ opacity:0; transform:translateY(22px); transition:.7s cubic-bezier(.2,.7,.2,1); }
+  .reveal.in{ opacity:1; transform:none; }
 </style>
 </head>
 <body>
+
+<nav>
+  <div class="wrap">
+    <span class="brand">CDSA&nbsp;Harness</span>
+    <div class="navlinks">
+      <a href="#install">설치</a>
+      <a href="#why">원리</a>
+      <a href="#features">기능</a>
+      <a href="#public">공공</a>
+      <a href="https://github.com/cdsassj00/miniharness">GitHub</a>
+    </div>
+  </div>
+</nav>
+
 <header>
   <div class="wrap">
-    <div class="logo">CDSA&nbsp;Harness</div>
-    <div class="tag">AI 에이전트가 내부에서 무슨 일을 하는지 <b>단계별로 드러내는</b> 교육용 하네스</div>
-    <div class="made">made by CDSA</div>
-    <div class="btns">
-      <a class="btn p" href="https://www.npmjs.com/package/cdsa-harness">npm 설치</a>
+    <div class="eyebrow">AI Agent Harness · 교육용</div>
+    <h1>AI 가 내부에서<br /><span class="g">무엇을 하는지</span> 보여준다</h1>
+    <p class="lead">Claude Code·Codex 는 결과만 보여주지만, CDSA Harness 는 컨텍스트·토큰·판단·도구·되먹임까지 — 에이전트의 모든 단계를 펼쳐 보여줍니다.</p>
+    <div class="made">made by <b>CDSA</b></div>
+    <div class="cta">
+      <a class="btn p" href="https://www.npmjs.com/package/cdsa-harness">npm 으로 설치</a>
       <a class="btn s" href="https://github.com/cdsassj00/miniharness/releases">실행파일 다운로드</a>
-      <a class="btn s" href="https://github.com/cdsassj00/miniharness">GitHub</a>
     </div>
   </div>
 </header>
 
 <div class="wrap">
 
-  <section>
-    <h2>⚡ 30초 설치</h2>
-    <div class="grid">
+  <section id="install" class="reveal">
+    <div class="kicker">Get started</div>
+    <h2>30초 설치 — 둘 중 하나</h2>
+    <div class="grid g2">
       <div class="card">
-        <b>① Node.js 가 있다면</b>
+        <b class="pill">① Node.js 가 있다면</b>
+        <p class="muted" style="margin:6px 0 0">개발자·일반 사용자</p>
         <pre>npx cdsa-harness
-# 또는
+# 또는 전역 설치
 npm install -g cdsa-harness</pre>
       </div>
       <div class="card">
-        <b>② Node 없이 (폐쇄망)</b>
-        <p class="muted">Releases 에서 OS 파일 하나만 받아 실행.</p>
-        <pre>cdsa-harness-win.exe   (Windows)
-cdsa-harness-macos     (macOS)
-cdsa-harness-linux     (Linux)</pre>
+        <b class="pill">② Node 없이 · 폐쇄망</b>
+        <p class="muted" style="margin:6px 0 0">파일 하나만 받아 실행</p>
+        <pre>cdsa-harness-win.exe   · Windows
+cdsa-harness-macos     · macOS
+cdsa-harness-linux     · Linux</pre>
       </div>
     </div>
   </section>
 
-  <section>
-    <h2>🧠 왜 특별한가</h2>
+  <section id="why" class="reveal">
+    <div class="kicker">Why it's different</div>
+    <h2>속을 다 보여주는 하네스</h2>
+    <p class="sub">시키면 AI 가 스스로 파일을 보고·읽고·고치며 일합니다. 그 과정을 한 단계도 숨기지 않아요.</p>
     <div class="card">
-      Claude Code·Codex 는 결과만 보여주지만, CDSA Harness 는 <b>속을 다 보여줍니다</b> —
-      어떤 컨텍스트를 보내는지, 토큰·응답시간, 모델의 판단, 도구 실행, 그리고 결과를 다시 모델에 넣는 <b>되먹임</b>까지.
-      <pre>입력 → 컨텍스트 구성 → LLM 호출 → 도구 판단 → 실행/승인 → 결과 되먹임 → (반복)</pre>
+      <div class="flow">
+        입력 → <b>컨텍스트 구성</b> → <b>LLM 호출</b> → <b>도구 판단</b> → 실행/승인 → <b>결과 되먹임</b> → (반복)
+      </div>
+      <p class="muted" style="margin:16px 0 0">매 단계마다 모델에 보내는 메시지, 추정 토큰, 실제 응답시간·토큰 사용량, 도구 호출, 그리고 결과를 다시 모델에 넣는 ‘되먹임’까지 그대로 표시합니다.</p>
     </div>
   </section>
 
-  <section>
-    <h2>✨ 기능</h2>
-    <div class="grid">
-      <div class="card feat"><b>🎓 교육 모드</b><p>내부 동작을 단계별 패널로</p></div>
-      <div class="card feat"><b>⚡ 실시간 스트리밍</b><p>응답이 토큰 단위로 흐름</p></div>
-      <div class="card feat"><b>🤖 실제 LLM</b><p>OpenAI·Claude·OpenRouter·사내 LLM</p></div>
-      <div class="card feat"><b>🔌 확장</b><p>플러그인·스킬·MCP(Cursor·Claude Code 공용)</p></div>
-      <div class="card feat"><b>🛡️ 안전장치</b><p>작업폴더 sandbox + 파일수정 승인</p></div>
-      <div class="card feat"><b>📦 의존성 0개</b><p>Node 18+ 내장만 사용</p></div>
+  <section class="reveal" style="padding:54px 0">
+    <p class="quote">“모델은 <span class="g">생각</span>만 하고, 실제 행동은 <span class="g">통제된 도구</span>로.” <br />그 경계를 눈으로 배우는 교육용 하네스.</p>
+  </section>
+
+  <section id="features" class="reveal">
+    <div class="kicker">Features</div>
+    <h2>필요한 건 다 들어있어요</h2>
+    <div class="grid g3">
+      <div class="card feat"><div class="ic">🎓</div><b>교육 모드</b><p>내부 동작을 단계별 패널로</p></div>
+      <div class="card feat"><div class="ic">⚡</div><b>실시간 스트리밍</b><p>응답이 토큰 단위로 흐름</p></div>
+      <div class="card feat"><div class="ic">🤖</div><b>실제 LLM</b><p>OpenAI·Claude·OpenRouter·사내 LLM</p></div>
+      <div class="card feat"><div class="ic">🔌</div><b>확장</b><p>플러그인·스킬·MCP(Cursor·Claude Code 공용)</p></div>
+      <div class="card feat"><div class="ic">🛡️</div><b>안전장치</b><p>작업폴더 sandbox + 파일수정 승인</p></div>
+      <div class="card feat"><div class="ic">📦</div><b>의존성 0개</b><p>Node 18+ 내장만 사용</p></div>
     </div>
   </section>
 
-  <section>
-    <h2>🇰🇷 대한민국 공공 업무 스킬 (내장)</h2>
+  <section id="public" class="reveal">
+    <div class="kicker">For Korean public sector</div>
+    <h2>대한민국 공공 업무 스킬 — 내장</h2>
+    <p class="sub">설치하면 누구에게나 딸려오는 행정 업무 명령. 한컴 <b>.hwpx</b> 문서 본문도 의존성 없이 추출합니다.</p>
     <div class="card">
       <div class="chips">
-        <span class="chip">/minwon 민원분류</span>
-        <span class="chip">/gongmun 공문 기안</span>
-        <span class="chip">/privacy 개인정보 점검</span>
-        <span class="chip">/press 보도자료</span>
-        <span class="chip">/report 개조식 보고</span>
-        <span class="chip">/minutes 회의록</span>
-        <span class="chip">/insa 인사발령</span>
-        <span class="chip">/budget 예산 검토</span>
-        <span class="chip">/notice 공고문</span>
-        <span class="chip">/answer 민원답변</span>
-        <span class="chip">/briefing 보도협조</span>
-        <span class="chip">/policyqa 정책 Q&A</span>
-        <span class="chip">/hwpx 한컴문서 요약</span>
+        <span class="chip"><i>/minwon</i> 민원분류</span>
+        <span class="chip"><i>/gongmun</i> 공문 기안</span>
+        <span class="chip"><i>/privacy</i> 개인정보 점검</span>
+        <span class="chip"><i>/press</i> 보도자료</span>
+        <span class="chip"><i>/report</i> 개조식 보고</span>
+        <span class="chip"><i>/minutes</i> 회의록</span>
+        <span class="chip"><i>/insa</i> 인사발령</span>
+        <span class="chip"><i>/budget</i> 예산 검토</span>
+        <span class="chip"><i>/notice</i> 공고문</span>
+        <span class="chip"><i>/answer</i> 민원답변</span>
+        <span class="chip"><i>/briefing</i> 보도협조</span>
+        <span class="chip"><i>/policyqa</i> 정책 Q&amp;A</span>
+        <span class="chip"><i>/hwpx</i> 한컴문서 요약</span>
       </div>
-      <p class="muted" style="margin-top:14px">한컴 <b>.hwpx</b> 문서 본문도 의존성 없이 추출합니다.</p>
     </div>
   </section>
 
-  <section>
-    <h2>🚀 처음이라면</h2>
-    <div class="card">
-      실행 후 <code>/guide</code> 또는 <code>/tutorial</code> 만 입력하면 단계별 안내가 떠요.
-      키가 없어도 <code>mock</code> 모드로 전체 흐름을 연습할 수 있습니다.
+  <section class="reveal" style="padding-top:20px">
+    <div class="card" style="text-align:center; padding:38px">
+      <h2 style="margin:0 0 8px">처음이라면, <span style="font-family:var(--sans)"><code style="color:var(--cy)">/guide</code></span></h2>
+      <p class="muted" style="margin:0">실행 후 <code style="color:var(--cy)">/guide</code> 또는 <code style="color:var(--cy)">/tutorial</code> 만 입력하면 단계별 안내가 떠요.<br />키가 없어도 <b>mock</b> 모드로 전체 흐름을 연습할 수 있습니다.</p>
+      <div class="cta" style="margin-top:24px">
+        <a class="btn p" href="https://github.com/cdsassj00/miniharness">GitHub 에서 보기</a>
+      </div>
     </div>
   </section>
 
 </div>
 
 <footer>
-  made by <b>CDSA</b> · MIT License ·
-  <a href="https://www.npmjs.com/package/cdsa-harness">npm</a> ·
-  <a href="https://github.com/cdsassj00/miniharness">GitHub</a>
+  <div class="wrap">
+    <p>made by <span class="fb">CDSA</span> · MIT License</p>
+    <p>
+      <a href="https://www.npmjs.com/package/cdsa-harness">npm</a> ·
+      <a href="https://github.com/cdsassj00/miniharness">GitHub</a> ·
+      <a href="https://github.com/cdsassj00/miniharness/releases">Releases</a>
+    </p>
+  </div>
 </footer>
+
+<script>
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });
+  }, { threshold: 0.12 });
+  document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+</script>
 </body>
 </html>

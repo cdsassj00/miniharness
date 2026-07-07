@@ -379,6 +379,25 @@ test("자동완성: 슬래시명령·스킬·/provider·@파일", async () => {
   assert.deepStrictEqual(c6, []);
 });
 
+test("시스템 프롬프트: 자기 사용법(MCP 설정 등) 포함", () => {
+  const ws = tmpWs();
+  const loop = new AgentLoop({
+    config: new Config({ provider: "mock", workspace: ws }),
+    client: {}, toolbox: new Toolbox(ws), onEvent: () => {}, approvalCallback: async () => ({ approved: true }),
+  });
+  const sp = loop._systemPrompt();
+  assert.match(sp, /mcpServers/, "MCP 설정법 포함");
+  assert.match(sp, /config\.json/);
+  assert.match(sp, /\/models/);
+  assert.match(sp, /접근할 수 없다.*답하지 마세요/s, "앵무새 방지 문구");
+});
+
+test("selectMenu: 비TTY 에선 undefined(폴백 신호)", async () => {
+  const { selectMenu } = await import("../src/select.js");
+  const r = await selectMenu(["a", "b"], { title: "t" });
+  assert.strictEqual(r, undefined);
+});
+
 test("거부하면 파일은 그대로다", async () => {
   const ws = tmpWs();
   const original = "건드리면 안 됨\n";

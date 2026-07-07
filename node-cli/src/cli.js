@@ -28,6 +28,7 @@ import { loadSkills, renderSkill } from "./skills.js";
 import { Toolbox } from "./tools.js";
 import { c, panel, renderDiff, renderMarkdown, setColor } from "./ui.js";
 import { makeCompleter } from "./completion.js";
+import { selectMenu } from "./select.js";
 
 // VERSION 은 src/builtins.js(생성물)에서 가져온다 — npm/exe 양쪽에서 동일.
 
@@ -333,6 +334,12 @@ async function pickModel(ask, cfg, query = "") {
     console.log(c.yellow(`'${query}' 에 맞는 모델이 없습니다.`) + c.dim("  예: /models claude · /models gpt"));
     return null;
   }
+  // ↑↓ 방향키 메뉴(TTY) — 파이프/CI 에선 아래 번호 입력으로 폴백
+  const menuSel = await selectMenu(list.slice(0, 50), {
+    title: `🤖 모델 선택 — ${cfg.provider}${live ? " (실시간)" : " (추천)"}${list.length > 50 ? ` · 상위 50/${list.length} — 검색어로 좁히세요` : ""}`,
+    current: cfg.model,
+  });
+  if (menuSel !== undefined) return menuSel; // 선택(문자열) 또는 취소(null)
   const shown = list.slice(0, 15);
   const lines = shown.map((m, i) => {
     const cur = m === cfg.model ? c.green(" ← 현재") : "";
@@ -519,20 +526,24 @@ function cleanKey(s) {
 // 대화형 연결 설정. 키는 환경변수가 있으면 그걸 우선 안내(파일 저장 안 함).
 // ask 가 null 을 주면(Ctrl+C) 조용히 취소.
 async function runSetup(ask, cfg) {
-  console.log(panel(
-    [
-      "어떤 AI 에 연결할까요? 번호를 입력하세요.",
-      `  ${c.bold("1")}) openai      (GPT, 키: ${ENV_KEYS.openai})`,
-      `  ${c.bold("2")}) anthropic   (Claude, 키: ${ENV_KEYS.anthropic})`,
-      `  ${c.bold("3")}) openrouter  (여러 모델 중계, 키: ${ENV_KEYS.openrouter})`,
-      `  ${c.bold("4")}) ollama      (로컬·폐쇄망 LLM, 키 불필요) 🏢`,
-      `  ${c.bold("5")}) mock        (키 없이 연습)`,
-    ],
-    { title: "🔌 연결 설정 (/setup)", color: "cyan" }
-  ));
-  const pickRaw = await ask(c.cyan("제공자 번호 [1-5] (취소: Enter): "));
-  if (pickRaw === null) return false;
-  const provider = { "1": "openai", "2": "anthropic", "3": "openrouter", "4": "ollama", "5": "mock" }[pickRaw.trim()];
+  const PROVIDER_ITEMS = [
+    ["openai", "openai — GPT (키: OPENAI_API_KEY)"],
+    ["anthropic", "anthropic — Claude (키: ANTHROPIC_API_KEY)"],
+    ["openrouter", "openrouter — 여러 모델 중계 (키: OPENROUTER_API_KEY)"],
+    ["ollama", "ollama — 로컬·폐쇄망 LLM, 키 불필요 🏢"],
+    ["mock", "mock — 키 없이 연습"],
+  ];
+  let provider = null;
+  const provSel = await selectMenu(PROVIDER_ITEMS.map(([, l]) => l), { title: "🔌 어떤 AI 에 연결할까요? (/setup)", current: (PROVIDER_ITEMS.find(([k]) => k === cfg.provider) || [])[1] });
+  if (provSel === null) { console.log(c.yellow("취소했습니다.")); return false; }
+  if (provSel !== undefined) {
+    provider = PROVIDER_ITEMS[PROVIDER_ITEMS.findIndex(([, l]) => l === provSel)][0];
+  } else {
+    console.log(panel(PROVIDER_ITEMS.map(([, l], i) => `  ${c.bold(String(i + 1))}) ${l}`), { title: "🔌 연결 설정 (/setup)", color: "cyan" }));
+    const pickRaw = await ask(c.cyan("제공자 번호 [1-5] (취소: Enter): "));
+    if (pickRaw === null) return false;
+    provider = (PROVIDER_ITEMS[parseInt(pickRaw.trim(), 10) - 1] || [])[0];
+  }
   if (!provider) {
     console.log(c.yellow("취소했습니다."));
     return false;

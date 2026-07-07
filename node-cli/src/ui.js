@@ -110,6 +110,57 @@ export function panel(lines, { title = "", color = "cyan" } = {}) {
   return [head, ...mid, bottom].join("\n");
 }
 
+// 모델 응답의 마크다운을 터미널 ANSI 로 렌더한다(OpenCode 류 체감 개선).
+// 지원: #제목 / **굵게** / *기울임* / `코드` / ```펜스``` / -·* 목록 / > 인용 / 표(|) / 구분선
+export function renderMarkdown(text) {
+  const out = [];
+  let inFence = false;
+  for (const raw of String(text ?? "").split("\n")) {
+    // 코드 펜스
+    const fence = /^\s*```(\w*)/.exec(raw);
+    if (fence) {
+      inFence = !inFence;
+      out.push(c.grey("  ┄┄┄" + (inFence && fence[1] ? " " + fence[1] + " " : "") + "┄┄┄"));
+      continue;
+    }
+    if (inFence) {
+      out.push("  " + c.yellow(raw));
+      continue;
+    }
+    let line = raw;
+    // 구분선
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      out.push(c.grey("─".repeat(30)));
+      continue;
+    }
+    // 제목
+    const h = /^(#{1,4})\s+(.*)$/.exec(line);
+    if (h) {
+      out.push(c.bold(c.cyan(h[2])));
+      continue;
+    }
+    // 인용
+    line = line.replace(/^(\s*)>\s?/, (_, sp) => sp + c.grey("│ "));
+    // 목록 글머리
+    line = line.replace(/^(\s*)[-*]\s+/, (_, sp) => sp + c.cyan("• "));
+    // 표: | 를 은은한 세로선으로
+    if (/^\s*\|.*\|\s*$/.test(raw)) {
+      if (/^\s*\|[\s:|-]+\|\s*$/.test(raw)) {
+        out.push(c.grey(raw.replace(/[|:-]/g, (m) => (m === "|" ? "┼" : "─")).trim()));
+        continue;
+      }
+      line = line.replace(/\|/g, c.grey("│"));
+    }
+    // 인라인: `코드` → 노랑, **굵게**, *기울임*
+    line = line
+      .replace(/`([^`]+)`/g, (_, s) => c.yellow(s))
+      .replace(/\*\*([^*]+)\*\*/g, (_, s) => c.bold(s))
+      .replace(/(^|\s)\*([^*\s][^*]*)\*(?=\s|$|[.,!?)])/g, (_, pre, s) => pre + c.italic(s));
+    out.push(line);
+  }
+  return out;
+}
+
 // diff 문자열을 색으로 렌더 (+초록 / -빨강 / 그외 흐림)
 export function renderDiff(diff) {
   return diff.split("\n").map((line) => {

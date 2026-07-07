@@ -26,7 +26,7 @@ import { discoverNpmExtensions, loadPlugins } from "./plugins.js";
 import { SessionLog, sessionsDir } from "./session.js";
 import { loadSkills, renderSkill } from "./skills.js";
 import { Toolbox } from "./tools.js";
-import { c, panel, renderDiff, setColor } from "./ui.js";
+import { c, panel, renderDiff, renderMarkdown, setColor } from "./ui.js";
 
 // VERSION 은 src/builtins.js(생성물)에서 가져온다 — npm/exe 양쪽에서 동일.
 
@@ -112,7 +112,7 @@ function printTeach(ev, stream) {
         return;
       }
       const lines = [];
-      if (ev.detail && ev.detail !== "(텍스트 없음)") lines.push(...clip(ev.detail, 1200).split("\n"));
+      if (ev.detail && ev.detail !== "(텍스트 없음)") lines.push(...renderMarkdown(clip(ev.detail, 1200)));
       for (const tc of d.toolCalls || []) {
         lines.push(c.yellow(`↳ 도구 호출 요청: ${c.bold(tc.name)}(${clip(JSON.stringify(tc.args), 200)})`));
       }
@@ -145,7 +145,7 @@ function printTeach(ev, stream) {
       return;
 
     case Step.DONE:
-      console.log(panel((ev.detail || "완료").split("\n"), { title: "✅ 완료", color: "green" }));
+      console.log(panel(renderMarkdown(ev.detail || "완료"), { title: "✅ 완료", color: "green" }));
       return;
 
     case Step.ERROR:
@@ -166,10 +166,10 @@ function printCompact(ev, stream) {
       for (const tc of d.toolCalls || []) console.log(c.yellow(`  ↳ ${tc.name}(${clip(JSON.stringify(tc.args), 120)})`));
       return;
     }
-    if (ev.detail && ev.detail !== "(텍스트 없음)") console.log(panel(ev.detail.split("\n"), { title: "🤖 모델", color: "green" }));
+    if (ev.detail && ev.detail !== "(텍스트 없음)") console.log(panel(renderMarkdown(ev.detail), { title: "🤖 모델", color: "green" }));
     return;
   }
-  if (ev.step === Step.DONE) return console.log(panel((ev.detail || "완료").split("\n"), { title: "✅ 완료", color: "green" }));
+  if (ev.step === Step.DONE) return console.log(panel(renderMarkdown(ev.detail || "완료"), { title: "✅ 완료", color: "green" }));
   if (ev.step === Step.ERROR) return console.log(panel((ev.detail || "").split("\n"), { title: `❌ ${ev.title}`, color: "red" }));
   if (ev.step === Step.FEEDBACK) return;
   let detail = clip((ev.detail || "").trim().replace(/\s+/g, " "), 110);

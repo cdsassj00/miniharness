@@ -297,6 +297,19 @@ test("undo: 수정 되돌리기 + 새 파일 생성 취소", async () => {
   assert.strictEqual(fs.readFileSync(path.join(ws, "b.txt"), "utf8"), "hello world");
 });
 
+test("renderMarkdown: 제목/굵게/코드/목록/펜스 마커 처리", async () => {
+  const { renderMarkdown } = await import("../src/ui.js");
+  const md = "# 제목\n- 항목 **중요** 사항\n`code` 와 평문\n```js\nconst a=1;\n```\n끝";
+  const lines = renderMarkdown(md).join("\n");
+  assert.ok(!lines.includes("# 제목"), "# 마커 제거");
+  assert.ok(lines.includes("제목"));
+  assert.ok(lines.includes("• "), "글머리 변환");
+  assert.ok(!lines.includes("**"), "굵게 마커 제거");
+  assert.ok(!/```/.test(lines), "펜스 마커 제거");
+  assert.ok(lines.includes("const a=1;"), "코드 내용 유지");
+  assert.ok(lines.includes("끝"));
+});
+
 test("거부하면 파일은 그대로다", async () => {
   const ws = tmpWs();
   const original = "건드리면 안 됨\n";

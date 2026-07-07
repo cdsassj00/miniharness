@@ -134,10 +134,32 @@ export class Toolbox {
     return { path: this.rel(target), diff };
   }
 
+  // /undo 용: 마지막 파일 변경 1건을 기억해 되돌릴 수 있게 한다(단순 프리미티브).
+  _backup(target) {
+    this.lastChange = {
+      target,
+      rel: this.rel(target),
+      old: fs.existsSync(target) ? fs.readFileSync(target, "utf8") : null, // null = 새 파일이었음
+    };
+  }
+
+  undoLast() {
+    if (!this.lastChange) throw new ToolError("되돌릴 파일 변경이 없습니다.");
+    const { target, rel, old } = this.lastChange;
+    this.lastChange = null;
+    if (old === null) {
+      fs.rmSync(target, { force: true });
+      return { ok: true, output: `${rel} 생성을 취소했습니다(파일 삭제).` };
+    }
+    fs.writeFileSync(target, old, "utf8");
+    return { ok: true, output: `${rel} 을 마지막 변경 이전 상태로 되돌렸습니다.` };
+  }
+
   writeFile(rel, content) {
     const target = this._resolve(rel);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     const existed = fs.existsSync(target);
+    this._backup(target);
     fs.writeFileSync(target, content || "", "utf8");
     const verb = existed ? "수정" : "생성";
     return {
@@ -172,6 +194,7 @@ export class Toolbox {
 
   editFile(rel, oldText, newText) {
     const { target, next } = this._computeEdit(rel, oldText, newText);
+    this._backup(target);
     fs.writeFileSync(target, next, "utf8");
     return { ok: true, output: `${this.rel(target)} 부분 수정 완료 (old ${oldText.length}자 → new ${(newText ?? "").length}자).` };
   }

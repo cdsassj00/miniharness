@@ -178,7 +178,9 @@ function printCompact(ev, stream) {
   console.log(line);
 }
 
-function makeApproval(ask) {
+function makeApproval(ask, cfg) {
+  let streak = 0; // 연속 승인 횟수 — 신뢰가 쌓이면 자동 수락을 제안한다
+  let hinted = false;
   return async (req) => {
     if (req.toolName === "write_file" || req.toolName === "edit_file") {
       const label = req.toolName === "edit_file" ? "부분 수정 제안" : "파일 쓰기 제안";
@@ -194,6 +196,11 @@ function makeApproval(ask) {
     const raw = await ask(c.yellow("이 작업을 승인하시겠습니까? [y/N] "));
     const ans = (raw || "").trim().toLowerCase();
     const approved = ans === "y" || ans === "yes";
+    streak = approved ? streak + 1 : 0;
+    if (approved && streak >= 3 && !hinted && cfg.approval_mode === "manual") {
+      hinted = true;
+      console.log(c.dim("💡 계속 승인 중이시네요 — 신뢰가 쌓였다면 ") + c.cyan("/auto") + c.dim(" 로 자동 수락을 켤 수 있어요."));
+    }
     return { approved, reason: approved ? "" : "사용자가 거부했습니다." };
   };
 }
@@ -391,25 +398,24 @@ function printHelp() {
         `시키고 싶은 일을 한국어로 입력하세요. 예) ${c.cyan("notes.txt 맨 아래에 할 일 3개 추가해줘")}`,
         `${c.cyan("@파일명")} 을 쓰면 그 파일 내용이 자동 첨부됩니다. 예) ${c.cyan("@memo.txt 이거 요약해줘")}`,
         "",
-        c.bold("슬래시 명령"),
-        `  ${c.cyan("/guide")}    처음 사용자용 빠른 시작 안내`,
-        `  ${c.cyan("/tutorial")} 단계별 인터랙티브 튜토리얼`,
-        `  ${c.cyan("/color")}    색상 켜기/끄기(흑백)`,
-        `  ${c.cyan("/about")}    이 도구 정보(made by CDSA)`,
-        `  ${c.cyan("/setup")}    제공자·API 키·모델 연결(대화형)`,
-        `  ${c.cyan("/provider")} <openai|anthropic|openrouter|mock> 제공자 변경`,
-        `  ${c.cyan("/model")} <이름>   모델 변경`,
-        `  ${c.cyan("/teach")}    교육 모드 켜기/끄기(내부 과정 펼쳐보기)`,
-        `  ${c.cyan("/stream")}   실시간 스트리밍 출력 켜기/끄기`,
-        `  ${c.cyan("/context")}  지금 모델에 보내는 컨텍스트 들여다보기`,
+        c.bold("대화"),
+        `  ${c.cyan("/new")}(=/clear)  새 대화 · ${c.cyan("/compact")} 대화를 모델이 요약해 압축 · ${c.cyan("/resume")} 지난 대화 이어가기`,
+        `  ${c.cyan("/undo")}  마지막 파일 변경 되돌리기 · ${c.cyan("/context")} 모델에 보내는 컨텍스트 보기`,
+        "",
+        c.bold("프로젝트"),
+        `  ${c.cyan("/init")}  모델이 폴더를 파악해 AGENT.md(프로젝트 규칙) 생성 · ${c.cyan("/memory")} 규칙 파일 보기`,
         `  ${c.cyan("/workspace")} <폴더>  작업 폴더 보기/변경 ('.' = 현재 폴더)`,
-        `  ${c.cyan("/skills")}   스킬 목록(.cdsa/skills 의 /명령들)`,
-        `  ${c.cyan("/plugins")}  플러그인 목록(파일·npm 추가 도구)`,
-        `  ${c.cyan("/mcp")}      연결된 MCP 서버/도구(다른 에이전트와 공용)`,
-        `  ${c.cyan("/resume")}   지난 대화 이어가기 (자동 저장됨)`,
-        `  ${c.cyan("/reset")}    대화/컨텍스트 초기화`,
-        `  ${c.cyan("/config")}   현재 설정값`,
-        `  ${c.cyan("/quit")}     종료 (Ctrl+D)`,
+        "",
+        c.bold("모델·설정"),
+        `  ${c.cyan("/setup")} 연결 마법사 · ${c.cyan("/model")} <이름> 변경 · ${c.cyan("/models")} 목록(ollama 는 설치분) · ${c.cyan("/provider")} 전환`,
+        `  ${c.cyan("/auto")} 자동 수락 토글 · ${c.cyan("/status")}(=/cost) 상태·누적 토큰 · ${c.cyan("/config")} 설정값`,
+        `  ${c.cyan("/teach")} 내부과정 펼치기 · ${c.cyan("/stream")} 실시간 출력 · ${c.cyan("/color")} 색상`,
+        "",
+        c.bold("확장"),
+        `  ${c.cyan("/skills")} 스킬 목록 · ${c.cyan("/plugins")} 플러그인 · ${c.cyan("/mcp")} MCP 서버`,
+        "",
+        c.bold("기타"),
+        `  ${c.cyan("/guide")} 빠른 시작 · ${c.cyan("/tutorial")} 튜토리얼 · ${c.cyan("/about")} 정보 · ${c.cyan("/quit")} 종료(Ctrl+D)`,
         "",
         c.bold("교육 모드에서 보이는 단계"),
         "  ① 입력 → ② LLM 호출(컨텍스트·도구) → ③ 모델 응답(토큰·지연) →",
@@ -698,7 +704,7 @@ export async function main(argv = []) {
     client: makeClient(cfg),
     toolbox,
     onEvent: makePrinter(cfg, stream),
-    approvalCallback: makeApproval(ask),
+    approvalCallback: makeApproval(ask, cfg),
     session,
     onToken,
   });
@@ -806,7 +812,120 @@ export async function main(argv = []) {
       ], { title: "ℹ️  about", color: "cyan" }));
       continue;
     }
-    if (low === "/reset") { loop.reset(); console.log(c.green("컨텍스트를 초기화했습니다.")); continue; }
+    // /clear·/new — Claude Code·OpenCode 컨벤션(= 기존 /reset)
+    if (low === "/reset" || low === "/clear" || low === "/new") {
+      loop.reset();
+      console.log(c.green("새 대화를 시작합니다(컨텍스트 초기화)."));
+      continue;
+    }
+    // /compact — 대화를 '모델이 직접' 요약해 컨텍스트를 압축 (Claude Code 방식, 모델-퍼스트)
+    if (low === "/compact") {
+      if (loop.messages.length < 4) {
+        console.log(c.dim("아직 압축할 대화가 충분하지 않습니다."));
+        continue;
+      }
+      const before = loop.messages.length;
+      console.log(c.dim("모델에게 대화 요약을 맡겨 컨텍스트를 압축합니다…"));
+      try {
+        const req = [
+          ...loop.messages,
+          {
+            role: "user",
+            content:
+              "지금까지의 대화를 다음 작업에 꼭 필요한 것만 남긴 한국어 요약으로 만들어줘: 확인된 사실, 내린 결정, 파일 변경 내역, 미완료 작업. 요약문만 출력해.",
+          },
+        ];
+        const r = await loop.client.chat(req, []);
+        const summary = (r.content || "").trim();
+        if (!summary) throw new Error("빈 요약");
+        loop.reset();
+        loop.messages.push(
+          { role: "user", content: `[이전 대화 요약]\n${summary}` },
+          { role: "assistant", content: "요약을 확인했습니다. 이어서 진행하겠습니다." }
+        );
+        console.log(c.green(`압축 완료 — 메시지 ${before}개 → ${loop.messages.length}개`));
+      } catch (e) {
+        console.log(c.yellow(`압축 실패: ${e.message}`));
+      }
+      continue;
+    }
+    // /undo — 마지막 파일 변경 1건 되돌리기 (OpenCode 컨벤션)
+    if (low === "/undo") {
+      try {
+        console.log(c.green(toolbox.undoLast().output));
+      } catch (e) {
+        console.log(c.yellow(e.message));
+      }
+      continue;
+    }
+    // /auto — 자동 수락 토글(신뢰 전환). Claude Code 의 auto-accept 에 해당.
+    if (low === "/auto") {
+      cfg.approval_mode = cfg.approval_mode === "auto" ? "manual" : "auto";
+      console.log(
+        cfg.approval_mode === "auto"
+          ? c.green("자동 수락 ON — 파일 수정·셸을 묻지 않고 실행합니다. (해제: /auto)")
+          : c.green("자동 수락 OFF — 변경 전 diff 를 보여주고 승인을 받습니다.")
+      );
+      continue;
+    }
+    // /init — '모델에게' 폴더를 파악시켜 AGENT.md 프로젝트 규칙을 만들게 한다 (Claude Code /init)
+    if (low === "/init") {
+      await runTurn(
+        "이 작업 폴더를 list_dir/read_file/search_files 로 파악한 뒤, 앞으로의 에이전트 작업 지침이 될 " +
+          "AGENT.md 파일을 write_file 로 생성해줘. 포함: ①프로젝트/폴더 개요 ②작업 시 지켜야 할 규칙(말투·제약·주의) " +
+          "③자주 할 작업 예시. 이미 AGENT.md 가 있으면 읽고 부족한 부분만 개선해."
+      );
+      continue;
+    }
+    // /status·/cost — 현재 상태 + 세션 누적 토큰 (Claude Code 컨벤션)
+    if (low === "/status" || low === "/cost") {
+      const u = loop.usage;
+      console.log(
+        panel(
+          [
+            `${c.grey("모델".padEnd(6))} ${c.bold(`${cfg.provider} · ${cfg.model}`)}`,
+            `${c.grey("폴더".padEnd(6))} ${cfg.workspacePath()}`,
+            `${c.grey("승인".padEnd(6))} ${cfg.approval_mode === "auto" ? c.yellow("자동 수락") : "수동(diff 확인)"} · 셸 ${cfg.allow_shell ? "허용" : "차단"}`,
+            `${c.grey("대화".padEnd(6))} 메시지 ${loop.messages.length}개 (/compact 로 압축 가능)`,
+            `${c.grey("토큰".padEnd(6))} 입력 ${u.input.toLocaleString()} · 출력 ${u.output.toLocaleString()} · 합계 ${c.bold(u.total.toLocaleString())} (호출 ${u.calls}회)`,
+          ],
+          { title: "📊 상태 (/status)", color: "cyan" }
+        )
+      );
+      continue;
+    }
+    // /models — 쓸 수 있는 모델 나열 (ollama 는 설치된 모델 실시간 조회)
+    if (low === "/models") {
+      if (cfg.provider === "ollama") {
+        const host = (cfg.base_url || "http://localhost:11434/v1/chat/completions").replace(/\/v1\/.*$/, "");
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 2000);
+          const res = await fetch(`${host}/api/tags`, { signal: ctrl.signal });
+          clearTimeout(t);
+          const models = ((await res.json()).models || []).map((m) => m.name);
+          console.log(panel(models.length ? models.map((m) => (m === cfg.model ? c.green("● " + m) : "  " + m)) : [c.dim("설치된 모델 없음 — ollama pull <모델>")], { title: `🤖 Ollama 모델 (${host})`, color: "cyan" }));
+        } catch {
+          console.log(c.yellow(`Ollama(${host})에 연결하지 못했습니다 — ollama serve 확인.`));
+        }
+      } else {
+        const sugg = SUGGESTED_MODELS[cfg.provider] || [];
+        console.log(panel(sugg.map((m) => (m === cfg.model ? c.green("● " + m) : "  " + m)), { title: `🤖 추천 모델 (${cfg.provider}) — 변경: /model <이름>`, color: "cyan" }));
+      }
+      continue;
+    }
+    // /memory — 프로젝트 규칙 파일(AGENT.md) 보기 (Claude Code /memory)
+    if (low === "/memory") {
+      const candidates = ["AGENT.md", "AGENTS.md", "CLAUDE.md", "rules.md"].map((n) => path.join(cfg.workspacePath(), n));
+      const found = candidates.find((p) => fs.existsSync(p));
+      if (found) {
+        console.log(panel(fs.readFileSync(found, "utf8").split("\n").slice(0, 40), { title: `🧠 프로젝트 규칙 — ${path.basename(found)}`, color: "cyan" }));
+        console.log(c.dim(`전체 경로: ${found} (매 턴 시스템 프롬프트에 주입됩니다)`));
+      } else {
+        console.log(c.yellow("프로젝트 규칙 파일이 없습니다. ") + c.cyan("/init") + c.dim(" 을 실행하면 모델이 폴더를 파악해 AGENT.md 를 만들어줍니다."));
+      }
+      continue;
+    }
     if (low === "/resume") {
       try {
         const saved = JSON.parse(fs.readFileSync(convPath, "utf8"));

@@ -88,6 +88,7 @@ export class AgentLoop {
     this.session = session;
     this.onToken = onToken; // 스트리밍 토큰 콜백(있으면 실시간 출력)
     this.messages = [];
+    this.usage = { input: 0, output: 0, total: 0, calls: 0 }; // 세션 누적 토큰(/status, /cost)
   }
 
   _emit(step, title = "", detail = "", data = {}) {
@@ -208,6 +209,13 @@ export class AgentLoop {
 
       // ③ 모델의 원본 판단 + 실측 메타(응답시간/토큰/요청크기)를 드러낸다.
       // streamed=true 면 텍스트는 이미 실시간 출력됨 → UI 는 메타만 덧붙인다.
+      if (reply.usage) {
+        this.usage.input += reply.usage.input || 0;
+        this.usage.output += reply.usage.output || 0;
+        this.usage.total += reply.usage.total || 0;
+        this.usage.calls += 1;
+      }
+
       this._emit(Step.MODEL_REPLY, "모델 응답", reply.content || "(텍스트 없음)", {
         toolCalls: reply.toolCalls.map((tc) => ({ name: tc.name, args: tc.args })),
         usage: reply.usage || null,

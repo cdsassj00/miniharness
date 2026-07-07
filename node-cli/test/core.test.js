@@ -275,6 +275,28 @@ test("ollama: 기본 로컬 엔드포인트 + base_url 우선", () => {
   assert.strictEqual(cfg.isReady(), true, "ollama 는 키 없이 사용 가능");
 });
 
+test("undo: 수정 되돌리기 + 새 파일 생성 취소", async () => {
+  const ws = tmpWs();
+  const tb = new Toolbox(ws);
+  // 되돌릴 게 없으면 오류
+  assert.throws(() => tb.undoLast(), /없습니다/);
+  // 기존 파일 수정 → undo 로 원복
+  fs.writeFileSync(path.join(ws, "a.txt"), "원본", "utf8");
+  tb.writeFile("a.txt", "변경됨");
+  assert.strictEqual(fs.readFileSync(path.join(ws, "a.txt"), "utf8"), "변경됨");
+  assert.match(tb.undoLast().output, /되돌렸습니다/);
+  assert.strictEqual(fs.readFileSync(path.join(ws, "a.txt"), "utf8"), "원본");
+  // 새 파일 생성 → undo 로 삭제
+  tb.writeFile("new.txt", "신규");
+  assert.match(tb.undoLast().output, /취소/);
+  assert.ok(!fs.existsSync(path.join(ws, "new.txt")));
+  // edit_file 도 백업된다
+  fs.writeFileSync(path.join(ws, "b.txt"), "hello world", "utf8");
+  tb.editFile("b.txt", "world", "CDSA");
+  tb.undoLast();
+  assert.strictEqual(fs.readFileSync(path.join(ws, "b.txt"), "utf8"), "hello world");
+});
+
 test("거부하면 파일은 그대로다", async () => {
   const ws = tmpWs();
   const original = "건드리면 안 됨\n";

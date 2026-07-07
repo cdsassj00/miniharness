@@ -27,6 +27,7 @@ import { SessionLog, sessionsDir } from "./session.js";
 import { loadSkills, renderSkill } from "./skills.js";
 import { Toolbox } from "./tools.js";
 import { c, panel, renderDiff, renderMarkdown, setColor } from "./ui.js";
+import { makeCompleter } from "./completion.js";
 
 // VERSION 은 src/builtins.js(생성물)에서 가져온다 — npm/exe 양쪽에서 동일.
 
@@ -268,6 +269,78 @@ async function buildExtensions(cfg, mcp) {
   return { toolbox, skills };
 }
 
+async function fetchJson(url, headers = {}, timeoutMs = 4000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { headers, signal: ctrl.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// 제공자별 '쓸 수 있는 모델' 목록. 가능하면 실시간(live), 실패 시 추천 목록으로 폴백.
+async function fetchProviderModels(cfg, query = "") {
+  const q = query.trim().toLowerCase();
+  const key = cfg.resolvedKey();
+  try {
+    if (cfg.provider === "openrouter") {
+      const r = await fetchJson("https://openrouter.ai/api/v1/models");
+      let ids = (r.data || []).map((m) => m.id).sort();
+      if (q) ids = ids.filter((id) => id.toLowerCase().includes(q));
+      return { list: ids, live: true };
+    }
+    if (cfg.provider === "ollama") {
+      const host = (cfg.base_url || "http://localhost:11434/v1/chat/completions").replace(/\/v1\/.*$/, "");
+      const r = await fetchJson(`${host}/api/tags`, {}, 2500);
+      let ids = (r.models || []).map((m) => m.name);
+      if (q) ids = ids.filter((id) => id.toLowerCase().includes(q));
+      return { list: ids, live: true };
+    }
+    if (cfg.provider === "openai" && key) {
+      const r = await fetchJson("https://api.openai.com/v1/models", { Authorization: `Bearer ${key}` });
+      let ids = (r.data || []).map((m) => m.id).filter((id) => /^(gpt|o\d)/.test(id)).sort();
+      if (q) ids = ids.filter((id) => id.toLowerCase().includes(q));
+      return { list: ids, live: true };
+    }
+    if (cfg.provider === "anthropic" && key) {
+      const r = await fetchJson("https://api.anthropic.com/v1/models", { "x-api-key": key, "anthropic-version": "2023-06-01" });
+      let ids = (r.data || []).map((m) => m.id);
+      if (q) ids = ids.filter((id) => id.toLowerCase().includes(q));
+      return { list: ids, live: true };
+    }
+  } catch { /* 폴백으로 */ }
+  let list = SUGGESTED_MODELS[cfg.provider] || [];
+  if (q) list = list.filter((m) => m.toLowerCase().includes(q));
+  return { list, live: false };
+}
+
+// 번호로 고르는 모델 선택 UI. 선택하면 모델명, 취소하면 null 반환.
+async function pickModel(ask, cfg, query = "") {
+  process.stdout.write(c.dim("모델 목록을 불러오는 중…\r"));
+  const { list, live } = await fetchProviderModels(cfg, query);
+  if (!list.length) {
+    console.log(c.yellow(`'${query}' 에 맞는 모델이 없습니다.`) + c.dim("  예: /models claude · /models gpt"));
+    return null;
+  }
+  const shown = list.slice(0, 15);
+  const lines = shown.map((m, i) => {
+    const cur = m === cfg.model ? c.green(" ← 현재") : "";
+    return `  ${c.bold(String(i + 1).padStart(2))}) ${m}${cur}`;
+  });
+  if (list.length > shown.length) lines.push(c.dim(`  … 외 ${list.length - shown.length}개 — '/models <검색어>' 로 좁히세요`));
+  lines.push(c.dim(live ? "  (실시간 목록)" : "  (추천 목록 — 키 연결 시 실시간 조회)"));
+  console.log(panel(lines, { title: `🤖 모델 선택 — ${cfg.provider}`, color: "cyan" }));
+  const a = await ask(c.cyan("번호 또는 모델명 입력 (엔터=취소): "));
+  if (a === null || !a.trim()) return null;
+  const s = a.trim();
+  const n = parseInt(s, 10);
+  if (Number.isInteger(n) && n >= 1 && n <= shown.length) return shown[n - 1];
+  return s; // 직접 입력한 이름 허용
+}
+
 function makeClient(cfg) {
   return new LLMClient({
     provider: cfg.provider,
@@ -504,13 +577,9 @@ async function runSetup(ask, cfg) {
     }
     const sugg = SUGGESTED_MODELS[provider] || [];
     const def = sugg[0] || "";
-    const note = provider === "openrouter" ? c.dim("  (OpenRouter 는 'provider/model' 형식)") : "";
-    const m = await ask(c.cyan(`모델 [${def}]${note}\n  추천: ${sugg.join(", ")}\n  > `));
-    if (m === null) {
-      console.log(c.yellow("취소했습니다."));
-      return false;
-    }
-    cfg.model = m.trim() || def;
+    const picked = await pickModel(ask, cfg); // 실시간 목록에서 번호로 선택
+    cfg.model = picked || def;
+    if (!picked) console.log(c.dim(`기본 모델 사용: ${def}`));
   }
 
   const saved = saveConfig(cfg);
@@ -593,7 +662,15 @@ export async function main(argv = []) {
   try {
     savedHistory = fs.readFileSync(histPath, "utf8").split("\n").filter(Boolean).slice(0, 200);
   } catch { /* 첫 실행 */ }
-  const rl = readline.createInterface({ input: stdin, output: stdout, history: savedHistory, historySize: 200 });
+  // Tab 자동완성: 슬래시 명령(내장+스킬) · /provider 인자 · @파일 멘션
+  let toolbox = null;
+  let skills = {};
+  const completer = makeCompleter({
+    skills: () => skills,
+    workspace: () => (toolbox ? toolbox.workspace : null),
+    providers: PROVIDERS,
+  });
+  const rl = readline.createInterface({ input: stdin, output: stdout, history: savedHistory, historySize: 200, completer });
   const saveHistory = () => {
     try {
       fs.mkdirSync(configDir(), { recursive: true });
@@ -683,7 +760,7 @@ export async function main(argv = []) {
     mcp = await connectMcpServers(cfg.mcpServers);
   }
   // 플러그인·스킬·도구상자를 작업 폴더 기준으로 구성(작업 폴더 변경 시 재사용)
-  let { toolbox, skills } = await buildExtensions(cfg, mcp);
+  ({ toolbox, skills } = await buildExtensions(cfg, mcp));
   if (toolbox.plugins.length || Object.keys(skills).length || toolbox.pluginErrors.length || mcp.servers.length) {
     const bits = [];
     if (toolbox.plugins.length) bits.push(c.green(`도구 +${toolbox.plugins.length}개`));
@@ -919,23 +996,17 @@ export async function main(argv = []) {
       );
       continue;
     }
-    // /models — 쓸 수 있는 모델 나열 (ollama 는 설치된 모델 실시간 조회)
-    if (low === "/models") {
-      if (cfg.provider === "ollama") {
-        const host = (cfg.base_url || "http://localhost:11434/v1/chat/completions").replace(/\/v1\/.*$/, "");
-        try {
-          const ctrl = new AbortController();
-          const t = setTimeout(() => ctrl.abort(), 2000);
-          const res = await fetch(`${host}/api/tags`, { signal: ctrl.signal });
-          clearTimeout(t);
-          const models = ((await res.json()).models || []).map((m) => m.name);
-          console.log(panel(models.length ? models.map((m) => (m === cfg.model ? c.green("● " + m) : "  " + m)) : [c.dim("설치된 모델 없음 — ollama pull <모델>")], { title: `🤖 Ollama 모델 (${host})`, color: "cyan" }));
-        } catch {
-          console.log(c.yellow(`Ollama(${host})에 연결하지 못했습니다 — ollama serve 확인.`));
-        }
+    // /models [검색어] — 모델 목록에서 번호로 선택(제공자별 실시간 조회)
+    if (low === "/models" || low.startsWith("/models ")) {
+      const query = user.split(/\s+/).slice(1).join(" ");
+      const picked = await pickModel(ask, cfg, query);
+      if (picked) {
+        cfg.model = picked;
+        loop.client = makeClient(cfg);
+        saveConfig(cfg);
+        console.log(c.green(`모델 변경 → ${picked}`) + c.dim("  (저장됨)"));
       } else {
-        const sugg = SUGGESTED_MODELS[cfg.provider] || [];
-        console.log(panel(sugg.map((m) => (m === cfg.model ? c.green("● " + m) : "  " + m)), { title: `🤖 추천 모델 (${cfg.provider}) — 변경: /model <이름>`, color: "cyan" }));
+        console.log(c.dim("변경하지 않았습니다."));
       }
       continue;
     }

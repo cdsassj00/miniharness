@@ -350,6 +350,35 @@ test("서브에이전트: spawn_agent 위임→결과 회수, 중첩 방지, usa
   assert.strictEqual(loop.usage.calls, 3);
 });
 
+test("자동완성: 슬래시명령·스킬·/provider·@파일", async () => {
+  const { makeCompleter, BUILTIN_COMMANDS } = await import("../src/completion.js");
+  const ws = tmpWs();
+  fs.writeFileSync(path.join(ws, "memo.txt"), "x", "utf8");
+  fs.writeFileSync(path.join(ws, "민원.hwpx"), "x", "utf8");
+  const comp = makeCompleter({
+    skills: () => ({ minwon: {}, gongmun: {} }),
+    workspace: () => ws,
+    providers: ["openai", "ollama", "openrouter"],
+  });
+  // 슬래시: 내장+스킬 합쳐서 접두 매칭
+  const [c1] = comp("/mi");
+  assert.ok(c1.includes("/minwon"));
+  const [c2] = comp("/mo");
+  assert.ok(c2.includes("/model") && c2.includes("/models"));
+  assert.ok(BUILTIN_COMMANDS.includes("/compact"));
+  // /provider 인자
+  const [c3] = comp("/provider ol");
+  assert.deepStrictEqual(c3, ["/provider ollama"]);
+  // @파일 멘션 (한글 파일 포함)
+  const [c4] = comp("이거 요약해줘 @me");
+  assert.deepStrictEqual(c4, ["이거 요약해줘 @memo.txt"]);
+  const [c5] = comp("@민");
+  assert.deepStrictEqual(c5, ["@민원.hwpx"]);
+  // 일반 텍스트는 무후보
+  const [c6] = comp("그냥 문장");
+  assert.deepStrictEqual(c6, []);
+});
+
 test("거부하면 파일은 그대로다", async () => {
   const ws = tmpWs();
   const original = "건드리면 안 됨\n";

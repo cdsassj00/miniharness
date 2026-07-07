@@ -11,6 +11,8 @@ const ENDPOINTS = {
   openai: "https://api.openai.com/v1/chat/completions",
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
   anthropic: "https://api.anthropic.com/v1/messages",
+  // Ollama(로컬/폐쇄망)는 OpenAI 호환 API 를 제공한다. OLLAMA_HOST 로 호스트 변경 가능.
+  ollama: `${(process.env.OLLAMA_HOST || "http://localhost:11434").replace(/\/$/, "")}/v1/chat/completions`,
 };
 
 export class LLMClient {
@@ -55,7 +57,7 @@ export class LLMClient {
       res = await fetch(url, { method: "POST", headers, body: json, signal: ctrl.signal });
     } catch (e) {
       clearTimeout(timer);
-      throw new LLMError(`네트워크 오류: ${e.message}`);
+      throw new LLMError(this._netErrorMessage(e));
     }
     if (!res.ok) {
       clearTimeout(timer);
@@ -63,6 +65,14 @@ export class LLMClient {
       throw new LLMError(httpErrorMessage(res.status, text || res.statusText));
     }
     return { res, started, timer, bodyBytes: Buffer.byteLength(json, "utf8") };
+  }
+
+  _netErrorMessage(e) {
+    let msg = `네트워크 오류: ${e.message}`;
+    if (this.provider === "ollama") {
+      msg += "\n  ↳ Ollama 가 실행 중인지 확인하세요: `ollama serve` (모델 설치: `ollama pull qwen2.5:7b`)";
+    }
+    return msg;
   }
 
   async _post(url, headers, body) {
@@ -74,7 +84,7 @@ export class LLMClient {
     try {
       res = await fetch(url, { method: "POST", headers, body: json, signal: ctrl.signal });
     } catch (e) {
-      throw new LLMError(`네트워크 오류: ${e.message}`);
+      throw new LLMError(this._netErrorMessage(e));
     } finally {
       clearTimeout(timer);
     }

@@ -9,8 +9,11 @@
 ```
 
 - **의존성 0개** — Node 18+ 내장 기능만(`fetch`/`readline`/`node:test`)
-- **실시간 스트리밍** — 모델 응답이 토큰 단위로 흐름(`/stream` 토글, OpenAI·Claude·mock)
-- **실제 LLM 연결** — OpenAI · Anthropic(Claude) · OpenRouter, 또는 키 없이 `mock`
+- **실시간 스트리밍** — 모델 응답이 토큰 단위로 흐름(`/stream` 토글)
+- **실제 LLM 연결** — OpenAI · Anthropic(Claude) · OpenRouter · **Ollama(로컬·폐쇄망, 키 불필요)** · `mock`
+- **에이전트 도구** — 폴더/파일 읽기 · `edit_file` 부분 수정 · `search_files` 재귀 검색 · 셸(옵션) · HWPX
+- **`@파일명` 멘션** — 입력에 `@memo.txt` 처럼 쓰면 파일 내용 자동 첨부
+- **`/resume`** — 지난 대화 자동 저장·이어가기, ↑↓ 명령 히스토리도 세션 간 유지
 - **교육 모드** — 매 반복마다 모델에 보내는 메시지 구성·추정 토큰·시스템 프롬프트, 실제 토큰 사용량/응답시간까지 그대로 표시
 - **MCP 클라이언트** — Claude Code·Cursor 등과 **공용 표준**. MCP 서버를 그대로 붙여 도구로 사용
 - **플러그인** — npm 으로 설치하거나 `.cdsa/plugins/` 에 JS 파일 → **도구 자동 등록**
@@ -186,6 +189,14 @@ npm pack cdsa-harness          # → cdsa-harness-x.y.z.tgz 생성
 npm install -g ./cdsa-harness-x.y.z.tgz   # 인터넷 불필요
 ```
 
+**Ollama — 인터넷 없이 로컬 LLM 으로 (가장 쉬움):**
+```bash
+# 폐쇄망 PC 에 Ollama 와 모델(예: qwen2.5:7b, exaone3.5)을 반입·설치한 뒤
+cdsa-harness
+› /setup   → 4) ollama 선택 (키 불필요, 설치된 모델 자동 감지)
+```
+> 원격 Ollama 서버는 주소만 입력(예: `http://10.0.0.5:11434`). `OLLAMA_HOST` 환경변수도 인식.
+
 **사내/폐쇄망 LLM (OpenAI 호환 서버 — vLLM, 내부 게이트웨이 등):**
 `config.json` 의 `base_url` 에 **전체 엔드포인트**를 적으면 그쪽으로 호출합니다.
 ```json
@@ -226,8 +237,11 @@ npm install -g ./cdsa-harness-x.y.z.tgz   # 인터넷 불필요
 |------|------|:----:|
 | `list_dir` | 폴더 나열 | 자동 |
 | `read_file` | 파일 읽기 | 자동 |
-| `write_file` | 파일 생성/수정 | **diff 승인** |
+| `search_files` | 파일명·내용 재귀 검색 | 자동 |
+| `write_file` | 새 파일/전체 덮어쓰기 | **diff 승인** |
+| `edit_file` | **부분 수정**(old→new 치환) | **diff 승인** |
 | `run_shell` | 셸 실행 | **승인**(기본 차단) |
+| `hwpx_read` | 한컴 .hwpx 본문 추출 | 자동 |
 
 모든 도구는 작업 폴더 밖으로 나갈 수 없습니다(경로 sandbox).
 

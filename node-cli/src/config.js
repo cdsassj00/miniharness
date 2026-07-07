@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export const PROVIDERS = ["openai", "anthropic", "openrouter", "mock"];
+export const PROVIDERS = ["openai", "anthropic", "openrouter", "ollama", "mock"];
 
 export const SUGGESTED_MODELS = {
   openai: ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1"],
@@ -15,6 +15,8 @@ export const SUGGESTED_MODELS = {
     "anthropic/claude-3.7-sonnet",
     "google/gemini-2.0-flash-001",
   ],
+  // 로컬/폐쇄망(Ollama). 도구 호출(tools) 지원 모델 권장. exaone 은 한국어 특화(LG).
+  ollama: ["qwen2.5:7b", "llama3.1:8b", "exaone3.5:7.8b"],
   mock: ["mock-agent"],
 };
 
@@ -83,6 +85,7 @@ export class Config {
 
   isReady() {
     if (this.provider === "mock") return true;
+    if (this.provider === "ollama") return true; // 로컬 LLM — API 키 불필요
     return Boolean(this.resolvedKey());
   }
 

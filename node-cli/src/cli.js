@@ -180,9 +180,10 @@ function printCompact(ev, stream) {
 
 function makeApproval(ask) {
   return async (req) => {
-    if (req.toolName === "write_file") {
+    if (req.toolName === "write_file" || req.toolName === "edit_file") {
+      const label = req.toolName === "edit_file" ? "부분 수정 제안" : "파일 쓰기 제안";
       console.log(panel(renderDiff(req.diff || "(변경 미리보기 없음)"), {
-        title: `🔐 파일 수정 제안 — ${req.path}`,
+        title: `🔐 ${label} — ${req.path}`,
         color: "yellow",
       }));
     } else if (req.toolName === "run_shell") {
@@ -271,7 +272,11 @@ function printIntro(cfg) {
   console.log(renderBanner());
   console.log(c.dim("AI 에이전트의 내부 동작을 단계별로 드러내는 교육용 하네스") + "  " + c.cyan("· made by CDSA"));
   console.log();
-  const keySource = cfg.provider === "mock" ? "-" : cfg.api_key ? "config.json" : ENV_KEYS[cfg.provider] && process.env[ENV_KEYS[cfg.provider]] ? `환경변수 ${ENV_KEYS[cfg.provider]}` : c.red("없음");
+  const keySource =
+    cfg.provider === "mock" ? "-"
+    : cfg.provider === "ollama" ? "불필요(로컬)"
+    : cfg.api_key ? "config.json"
+    : ENV_KEYS[cfg.provider] && process.env[ENV_KEYS[cfg.provider]] ? `환경변수 ${ENV_KEYS[cfg.provider]}` : c.red("없음");
   const rows = [
     ["버전", `v${VERSION}`],
     ["provider", cfg.provider],
@@ -384,6 +389,7 @@ function printHelp() {
       [
         c.bold("사용법"),
         `시키고 싶은 일을 한국어로 입력하세요. 예) ${c.cyan("notes.txt 맨 아래에 할 일 3개 추가해줘")}`,
+        `${c.cyan("@파일명")} 을 쓰면 그 파일 내용이 자동 첨부됩니다. 예) ${c.cyan("@memo.txt 이거 요약해줘")}`,
         "",
         c.bold("슬래시 명령"),
         `  ${c.cyan("/guide")}    처음 사용자용 빠른 시작 안내`,
@@ -400,6 +406,7 @@ function printHelp() {
         `  ${c.cyan("/skills")}   스킬 목록(.cdsa/skills 의 /명령들)`,
         `  ${c.cyan("/plugins")}  플러그인 목록(파일·npm 추가 도구)`,
         `  ${c.cyan("/mcp")}      연결된 MCP 서버/도구(다른 에이전트와 공용)`,
+        `  ${c.cyan("/resume")}   지난 대화 이어가기 (자동 저장됨)`,
         `  ${c.cyan("/reset")}    대화/컨텍스트 초기화`,
         `  ${c.cyan("/config")}   현재 설정값`,
         `  ${c.cyan("/quit")}     종료 (Ctrl+D)`,
@@ -427,13 +434,14 @@ async function runSetup(ask, cfg) {
       `  ${c.bold("1")}) openai      (GPT, 키: ${ENV_KEYS.openai})`,
       `  ${c.bold("2")}) anthropic   (Claude, 키: ${ENV_KEYS.anthropic})`,
       `  ${c.bold("3")}) openrouter  (여러 모델 중계, 키: ${ENV_KEYS.openrouter})`,
-      `  ${c.bold("4")}) mock        (키 없이 연습)`,
+      `  ${c.bold("4")}) ollama      (로컬·폐쇄망 LLM, 키 불필요) 🏢`,
+      `  ${c.bold("5")}) mock        (키 없이 연습)`,
     ],
     { title: "🔌 연결 설정 (/setup)", color: "cyan" }
   ));
-  const pickRaw = await ask(c.cyan("제공자 번호 [1-4] (취소: Enter): "));
+  const pickRaw = await ask(c.cyan("제공자 번호 [1-5] (취소: Enter): "));
   if (pickRaw === null) return false;
-  const provider = { "1": "openai", "2": "anthropic", "3": "openrouter", "4": "mock" }[pickRaw.trim()];
+  const provider = { "1": "openai", "2": "anthropic", "3": "openrouter", "4": "ollama", "5": "mock" }[pickRaw.trim()];
   if (!provider) {
     console.log(c.yellow("취소했습니다."));
     return false;
@@ -442,6 +450,29 @@ async function runSetup(ask, cfg) {
 
   if (provider === "mock") {
     cfg.model = "mock-agent";
+  } else if (provider === "ollama") {
+    const hostAns = await ask(c.cyan("Ollama 주소 [http://localhost:11434]: "));
+    if (hostAns === null) return false;
+    const host = (hostAns.trim() || "http://localhost:11434").replace(/\/+$/, "");
+    cfg.base_url = `${host}/v1/chat/completions`;
+    cfg.api_key = "ollama"; // 로컬 LLM 은 키가 필요 없다(호환용 자리표시)
+    // 설치된 모델 자동 감지(/api/tags) — 실패해도 조용히 추천 목록 사용
+    let installed = [];
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 2000);
+      const res = await fetch(`${host}/api/tags`, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (res.ok) installed = ((await res.json()).models || []).map((m) => m.name);
+    } catch {
+      console.log(c.yellow("  (Ollama 에 연결하지 못했어요 — `ollama serve` 실행 여부를 확인하세요. 계속 진행합니다.)"));
+    }
+    if (installed.length) console.log(c.green(`  설치된 모델: ${installed.slice(0, 8).join(", ")}`));
+    const sugg = installed.length ? installed : SUGGESTED_MODELS.ollama;
+    const def = sugg[0];
+    const m = await ask(c.cyan(`모델 [${def}]: `));
+    if (m === null) return false;
+    cfg.model = m.trim() || def;
   } else {
     const envName = ENV_KEYS[provider];
     const envVal = (process.env[envName] || "").trim();
@@ -504,7 +535,7 @@ export async function main(argv = []) {
       "CDSA Harness — AI 에이전트 내부를 드러내는 교육용 하네스 (터미널)\n\n" +
         "사용법: cdsa-harness [옵션]\n" +
         "       cdsa-harness add <npm-패키지>   플러그인 설치(이후 자동 로드)\n" +
-        "  --provider <openai|anthropic|openrouter|mock>\n" +
+        "  --provider <openai|anthropic|openrouter|ollama|mock>\n" +
         "  --model <모델명>\n" +
         "  --workspace <폴더경로>\n" +
         "  --setup                대화형 연결 설정 실행\n" +
@@ -546,12 +577,25 @@ export async function main(argv = []) {
   if (args.noColor) cfg.no_color = true;
   if (cfg.no_color) setColor(false); // 색상 끄기(흑백)
 
-  const rl = readline.createInterface({ input: stdin, output: stdout });
+  // 명령 히스토리(↑↓)를 세션 간에도 기억한다.
+  const histPath = path.join(configDir(), "history");
+  let savedHistory = [];
+  try {
+    savedHistory = fs.readFileSync(histPath, "utf8").split("\n").filter(Boolean).slice(0, 200);
+  } catch { /* 첫 실행 */ }
+  const rl = readline.createInterface({ input: stdin, output: stdout, history: savedHistory, historySize: 200 });
+  const saveHistory = () => {
+    try {
+      fs.mkdirSync(configDir(), { recursive: true });
+      fs.writeFileSync(histPath, (rl.history || []).slice(0, 200).join("\n"), "utf8");
+    } catch { /* ignore */ }
+  };
   let session = null;
   let mcp = { tools: [], servers: [], errors: [], closeAll: () => {} };
 
   // Ctrl+C → 깔끔하게 종료(스택트레이스 없이). 어디서 누르든 안전.
   const gracefulExit = () => {
+    saveHistory();
     try { rl.close(); } catch { /* */ }
     try { session && session.close(); } catch { /* */ }
     try { mcp && mcp.closeAll && mcp.closeAll(); } catch { /* */ }
@@ -559,14 +603,50 @@ export async function main(argv = []) {
     process.exit(0);
   };
   rl.on("SIGINT", gracefulExit);
-  // 프롬프트 헬퍼: Ctrl+C(AbortError) 등은 null 로 돌려 호출부가 취소로 처리.
-  const ask = async (q) => {
-    try {
-      return await rl.question(q);
-    } catch {
-      return null;
-    }
-  };
+  // 프롬프트 헬퍼. TTY 면 rl.question 그대로(히스토리·편집 지원).
+  // 파이프/스크립트 입력(non-TTY)은 줄을 큐로 받아 어떤 타이밍에 물어도 유실되지 않게 한다
+  // (모델 호출 중 도착한 승인 답변 줄이 사라지던 문제 해결 — CI/데모 자동화 가능).
+  let ask;
+  if (stdin.isTTY) {
+    ask = async (q) => {
+      try {
+        return await rl.question(q);
+      } catch {
+        return null;
+      }
+    };
+  } else {
+    const lineQueue = [];
+    let pendingResolve = null;
+    let closed = false;
+    rl.on("line", (l) => {
+      if (pendingResolve) {
+        const r = pendingResolve;
+        pendingResolve = null;
+        r(l);
+      } else lineQueue.push(l);
+    });
+    rl.on("close", () => {
+      closed = true;
+      if (pendingResolve) {
+        const r = pendingResolve;
+        pendingResolve = null;
+        r(null);
+      }
+    });
+    ask = (q) => {
+      process.stdout.write(q);
+      if (lineQueue.length) {
+        const l = lineQueue.shift();
+        process.stdout.write(l + "\n");
+        return Promise.resolve(l);
+      }
+      if (closed) return Promise.resolve(null);
+      return new Promise((res) => {
+        pendingResolve = res;
+      });
+    };
+  }
 
   if (args.setup) {
     await runSetup(ask, cfg);
@@ -625,6 +705,37 @@ export async function main(argv = []) {
   loop.reset();
 
   const rule = () => console.log(c.grey("─".repeat(Math.min(80, stdout.columns || 80))));
+
+  // @파일 멘션: 입력 속 @경로 가 작업 폴더의 실제 파일이면 내용을 프롬프트에 첨부한다.
+  const expandMentions = (text) => {
+    const tokens = [...text.matchAll(/@([\w가-힣./\\-]+)/g)].map((m) => m[1]);
+    let out = text;
+    for (const t of [...new Set(tokens)]) {
+      try {
+        const r = toolbox.readFile(t);
+        const clipped = (r.output || "").slice(0, 4000);
+        out += `\n\n[첨부 @${t}]\n${clipped}`;
+        console.log(c.dim(`📎 @${t} 첨부됨 (${clipped.length}자)`));
+      } catch { /* 파일이 아니면 무시(이메일 등) */ }
+    }
+    return out;
+  };
+
+  // 대화 자동저장(/resume 용) + 멘션 확장을 겸하는 실행 헬퍼.
+  const convPath = path.join(configDir(), "last_session.json");
+  const runTurn = async (promptText) => {
+    rule();
+    try {
+      await loop.run(expandMentions(promptText));
+    } catch (e) {
+      console.log(c.red(`실행 오류: ${e?.message || e}`));
+    }
+    rule();
+    try {
+      fs.mkdirSync(configDir(), { recursive: true });
+      fs.writeFileSync(convPath, JSON.stringify({ time: Date.now(), provider: cfg.provider, model: cfg.model, messages: loop.messages }), "utf8");
+    } catch { /* 저장 실패 무시 */ }
+  };
 
   // 첫 실행 온보딩(한 번만 — ~/.cdsa_harness/.welcomed 표시): 작업 폴더 설정 + 튜토리얼
   const markerPath = path.join(configDir(), ".welcomed");
@@ -696,6 +807,19 @@ export async function main(argv = []) {
       continue;
     }
     if (low === "/reset") { loop.reset(); console.log(c.green("컨텍스트를 초기화했습니다.")); continue; }
+    if (low === "/resume") {
+      try {
+        const saved = JSON.parse(fs.readFileSync(convPath, "utf8"));
+        if (!Array.isArray(saved.messages) || !saved.messages.length) throw new Error("빈 세션");
+        loop.messages = saved.messages;
+        const when = new Date(saved.time).toLocaleString("ko-KR");
+        console.log(c.green(`지난 대화를 이어갑니다 — ${when} · ${saved.model} · 메시지 ${saved.messages.length}개 복원`));
+        console.log(c.dim("(새로 시작하려면 /reset)"));
+      } catch {
+        console.log(c.yellow("이어갈 지난 대화가 없습니다."));
+      }
+      continue;
+    }
     if (low === "/config") { printIntro(cfg); console.log(c.dim(`config.json: ${configPath()}`)); continue; }
     if (low.startsWith("/workspace") || low.startsWith("/cd")) {
       const arg = user.split(/\s+/).slice(1).join(" ").trim();
@@ -821,26 +945,14 @@ export async function main(argv = []) {
           continue;
         }
         console.log(c.dim(`(스킬 '/${name}' 실행)`));
-        rule();
-        try {
-          await loop.run(renderSkill(skills[name], argStr));
-        } catch (e) {
-          console.log(c.red(`실행 오류: ${e?.message || e}`));
-        }
-        rule();
+        await runTurn(renderSkill(skills[name], argStr));
       } else {
         console.log(c.yellow(`알 수 없는 명령/스킬: /${name} — ${c.cyan("/help")}, ${c.cyan("/skills")} 참고`));
       }
       continue;
     }
 
-    rule();
-    try {
-      await loop.run(user);
-    } catch (e) {
-      console.log(c.red(`실행 오류: ${e?.message || e}`));
-    }
-    rule();
+    await runTurn(user);
   }
 
   rl.close();

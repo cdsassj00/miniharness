@@ -234,6 +234,47 @@ test(".hwp(구버전)은 안내 메시지를 준다", async () => {
   assert.match(out, /hwpx/i);
 });
 
+test("edit_file: 부분 수정 성공/유일성 검사/미존재 오류", async () => {
+  const ws = tmpWs();
+  fs.writeFileSync(path.join(ws, "a.txt"), "hello world\nhello again\n", "utf8");
+  const tb = new Toolbox(ws);
+  // 여러 번 일치 → 오류
+  assert.throws(() => tb.editFile("a.txt", "hello", "bye"), /일치/);
+  // 못 찾음 → 오류
+  assert.throws(() => tb.editFile("a.txt", "없는텍스트", "x"), /찾지 못했/);
+  // 유일 일치 → 성공
+  const r = tb.editFile("a.txt", "hello world", "안녕 세계");
+  assert.match(r.output, /부분 수정 완료/);
+  assert.strictEqual(fs.readFileSync(path.join(ws, "a.txt"), "utf8"), "안녕 세계\nhello again\n");
+  // 미리보기는 파일을 바꾸지 않는다
+  const before = fs.readFileSync(path.join(ws, "a.txt"), "utf8");
+  const pv = tb.previewEdit("a.txt", "hello again", "다시 안녕");
+  assert.match(pv.diff, /\+다시 안녕/);
+  assert.strictEqual(fs.readFileSync(path.join(ws, "a.txt"), "utf8"), before);
+});
+
+test("search_files: 파일명·내용 검색, node_modules 제외", async () => {
+  const ws = tmpWs();
+  fs.mkdirSync(path.join(ws, "docs"), { recursive: true });
+  fs.mkdirSync(path.join(ws, "node_modules", "junk"), { recursive: true });
+  fs.writeFileSync(path.join(ws, "docs", "minwon-guide.txt"), "민원 처리 절차 안내\n둘째 줄", "utf8");
+  fs.writeFileSync(path.join(ws, "node_modules", "junk", "x.txt"), "민원 노이즈", "utf8");
+  const tb = new Toolbox(ws);
+  const r = tb.searchFiles("민원");
+  assert.match(r.output, /minwon-guide\.txt/);
+  assert.match(r.output, /민원 처리 절차/);
+  assert.ok(!r.output.includes("node_modules"), "node_modules 는 제외");
+});
+
+test("ollama: 기본 로컬 엔드포인트 + base_url 우선", () => {
+  const client = new LLMClient({ provider: "ollama", apiKey: "", model: "qwen2.5:7b" });
+  assert.match(client._endpoint("ollama"), /11434\/v1\/chat\/completions/);
+  const custom = new LLMClient({ provider: "ollama", apiKey: "", model: "m", baseUrl: "http://10.0.0.5:11434/v1/chat/completions" });
+  assert.strictEqual(custom._endpoint("ollama"), "http://10.0.0.5:11434/v1/chat/completions");
+  const cfg = new Config({ provider: "ollama" });
+  assert.strictEqual(cfg.isReady(), true, "ollama 는 키 없이 사용 가능");
+});
+
 test("거부하면 파일은 그대로다", async () => {
   const ws = tmpWs();
   const original = "건드리면 안 됨\n";

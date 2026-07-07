@@ -7,12 +7,14 @@ import path from "node:path";
 export const TOOL_LABELS = {
   list_dir: "폴더 보기",
   read_file: "파일 읽기",
-  write_file: "파일 수정",
+  write_file: "파일 쓰기",
+  edit_file: "부분 수정",
+  search_files: "파일 검색",
   run_shell: "셸 실행",
 };
 
 // 사용자 승인이 필요한(환경을 바꾸는) 도구
-export const MUTATING_TOOLS = new Set(["write_file", "run_shell"]);
+export const MUTATING_TOOLS = new Set(["write_file", "edit_file", "run_shell"]);
 
 export class ToolError extends Error {}
 
@@ -145,6 +147,90 @@ export class Toolbox {
     };
   }
 
+  // 부분 수정: old_text 를 딱 한 번 찾아 new_text 로 바꾼다(전체 덮어쓰기 불필요).
+  _computeEdit(rel, oldText, newText) {
+    const target = this._resolve(rel);
+    if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+      throw new ToolError(`파일이 없습니다: ${rel}`);
+    }
+    if (!oldText) throw new ToolError("old_text 가 비어 있습니다.");
+    const cur = fs.readFileSync(target, "utf8");
+    const count = cur.split(oldText).length - 1;
+    if (count === 0) throw new ToolError("old_text 를 파일에서 찾지 못했습니다. 파일을 다시 read_file 로 확인하세요.");
+    if (count > 1) throw new ToolError(`old_text 가 ${count}번 일치합니다 — 주변 문맥을 포함해 더 길게 지정하세요.`);
+    return { target, cur, next: cur.replace(oldText, newText ?? "") };
+  }
+
+  previewEdit(rel, oldText, newText) {
+    try {
+      const { target, cur, next } = this._computeEdit(rel, oldText, newText);
+      return { path: this.rel(target), diff: diffLines(cur, next).filter((l) => !l.startsWith(" ")).join("\n") || "(변화 없음)" };
+    } catch (e) {
+      return { path: rel, diff: `(미리보기 불가: ${e.message})` };
+    }
+  }
+
+  editFile(rel, oldText, newText) {
+    const { target, next } = this._computeEdit(rel, oldText, newText);
+    fs.writeFileSync(target, next, "utf8");
+    return { ok: true, output: `${this.rel(target)} 부분 수정 완료 (old ${oldText.length}자 → new ${(newText ?? "").length}자).` };
+  }
+
+  // 파일명 + 내용 검색(재귀). node_modules/.git 등 노이즈 제외, 대소문자 무시.
+  searchFiles(query, sub = ".") {
+    if (!query || !query.trim()) throw new ToolError("검색어가 비어 있습니다.");
+    const q = query.toLowerCase();
+    const rootDir = this._resolve(sub);
+    const SKIP = new Set(["node_modules", ".git", "dist", "build", "__pycache__", ".venv"]);
+    const nameHits = [];
+    const contentHits = [];
+    let scanned = 0;
+    const walk = (dir) => {
+      let entries = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (scanned > 2000 || contentHits.length >= 40) return;
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (!SKIP.has(e.name) && !e.name.startsWith(".")) walk(full);
+          continue;
+        }
+        scanned++;
+        const rel = this.rel(full);
+        if (e.name.toLowerCase().includes(q)) nameHits.push(rel);
+        let st;
+        try {
+          st = fs.statSync(full);
+        } catch {
+          continue;
+        }
+        if (st.size > 512 * 1024) continue; // 큰 파일 스킵
+        let text;
+        try {
+          text = fs.readFileSync(full, "utf8");
+        } catch {
+          continue;
+        }
+        if (text.includes(" ")) continue; // 바이너리 스킵
+        const lines = text.split("\n");
+        for (let i = 0; i < lines.length && contentHits.length < 40; i++) {
+          if (lines[i].toLowerCase().includes(q)) {
+            contentHits.push(`${rel}:${i + 1}  ${lines[i].trim().slice(0, 120)}`);
+          }
+        }
+      }
+    };
+    walk(rootDir);
+    const parts = [];
+    if (nameHits.length) parts.push(`[파일명 일치 ${nameHits.length}건]\n` + nameHits.slice(0, 20).join("\n"));
+    if (contentHits.length) parts.push(`[내용 일치]\n` + contentHits.join("\n"));
+    return { ok: true, output: parts.join("\n\n") || `'${query}' 검색 결과가 없습니다.` };
+  }
+
   runShell(command) {
     if (!this.allowShell) {
       throw new ToolError("셸 실행이 설정에서 비활성화되어 있습니다(allow_shell=false).");
@@ -172,6 +258,8 @@ export class Toolbox {
     if (name === "list_dir") return this.listDir(args.path || ".");
     if (name === "read_file") return this.readFile(args.path || "");
     if (name === "write_file") return this.writeFile(args.path || "", args.content || "");
+    if (name === "edit_file") return this.editFile(args.path || "", args.old_text || "", args.new_text ?? "");
+    if (name === "search_files") return this.searchFiles(args.query || "", args.path || ".");
     if (name === "run_shell") return this.runShell(args.command || "");
     const plugin = this._pluginMap.get(name);
     if (plugin) {
@@ -221,7 +309,7 @@ export function toolSchemas(allowShell = false, plugins = []) {
       function: {
         name: "write_file",
         description:
-          "작업 폴더 안의 파일을 새 내용으로 만들거나 덮어쓴다. 전체 파일 내용을 content 로 전달. 사용자 승인 후 적용된다.",
+          "새 파일을 만들거나 파일 전체를 덮어쓴다. 기존 파일의 일부만 고칠 땐 write_file 대신 edit_file 을 써라. 사용자 승인 후 적용된다.",
         parameters: {
           type: "object",
           properties: {
@@ -229,6 +317,38 @@ export function toolSchemas(allowShell = false, plugins = []) {
             content: { type: "string", description: "파일 전체 내용" },
           },
           required: ["path", "content"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "edit_file",
+        description:
+          "기존 파일의 일부만 수정한다(권장). old_text 는 파일 안에서 정확히 한 번만 일치해야 하며 new_text 로 치환된다. 사용자 승인 후 적용된다.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "수정할 파일의 상대 경로" },
+            old_text: { type: "string", description: "바꿀 기존 텍스트(문맥 포함, 파일에서 유일해야 함)" },
+            new_text: { type: "string", description: "새 텍스트" },
+          },
+          required: ["path", "old_text", "new_text"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "search_files",
+        description: "작업 폴더에서 파일명·파일내용을 재귀 검색한다(대소문자 무시). 어떤 파일에 뭐가 있는지 찾을 때 사용.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "검색어" },
+            path: { type: "string", description: "검색 시작 폴더(기본 '.')" },
+          },
+          required: ["query"],
         },
       },
     },

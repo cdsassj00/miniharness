@@ -105,17 +105,21 @@ export class AgentLoop {
     } catch {
       listing = "(폴더를 읽을 수 없음)";
     }
-    const toolNames = ["list_dir", "read_file", "write_file"].concat(
+    const toolNames = ["list_dir", "read_file", "search_files", "write_file", "edit_file"].concat(
       this.config.allow_shell ? ["run_shell"] : []
     );
-    const toolsDesc = toolNames.map((n) => `${n}(${TOOL_LABELS[n]})`).join(", ");
+    const pluginNames = (this.toolbox.plugins || []).map((p) => p.name);
+    const toolsDesc = toolNames
+      .map((n) => `${n}(${TOOL_LABELS[n]})`)
+      .concat(pluginNames)
+      .join(", ");
 
     const parts = [
       "당신은 'CDSA Harness' 안에서 동작하는 소형 코딩 에이전트입니다.",
       "당신은 직접 파일을 만질 수 없습니다. 반드시 제공된 도구로만 작업 폴더를 다룹니다.",
       `사용 가능한 도구: ${toolsDesc}.`,
-      "파일을 수정할 때는 write_file 에 '파일 전체 내용'을 담아 호출하세요(부분 패치 아님).",
-      "추측하지 말고, 필요하면 먼저 read_file/list_dir 로 사실을 확인하세요.",
+      "기존 파일의 일부만 고칠 땐 edit_file(old_text→new_text), 새 파일/전체 교체는 write_file 을 쓰세요.",
+      "무엇이 어디 있는지 모르면 search_files 로 찾고, 추측하지 말고 read_file/list_dir 로 사실을 확인하세요.",
       "작업이 끝나면 도구를 더 호출하지 말고 한국어로 결과를 요약하세요.",
       `\n[작업 폴더 루트]\n${ws}`,
       `\n[현재 폴더 내용]\n${listing}`,
@@ -270,6 +274,10 @@ export class AgentLoop {
     if (tc.name === "write_file") {
       const { path: p, diff } = this.toolbox.previewWrite(tc.args.path || "", tc.args.content || "");
       return { toolName: "write_file", toolLabel: TOOL_LABELS.write_file, args: tc.args, path: p, diff };
+    }
+    if (tc.name === "edit_file") {
+      const { path: p, diff } = this.toolbox.previewEdit(tc.args.path || "", tc.args.old_text || "", tc.args.new_text ?? "");
+      return { toolName: "edit_file", toolLabel: TOOL_LABELS.edit_file, args: tc.args, path: p, diff };
     }
     if (tc.name === "run_shell") {
       return {

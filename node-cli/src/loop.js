@@ -97,17 +97,21 @@ function findRules(workspace) {
 }
 
 export class AgentLoop {
-  constructor({ config, client, toolbox, onEvent, approvalCallback, session = null, onToken = null, depth = 0 }) {
+  constructor({ config, client, toolbox, onEvent, approvalCallback, questionCallback = null, session = null, onToken = null, depth = 0 }) {
     this.config = config;
     this.client = client;
     this.toolbox = toolbox;
     this.onEvent = onEvent;
     this.approvalCallback = approvalCallback;
+    this.questionCallback = questionCallback; // question 도구 → 사용자에게 직접 질문
     this.session = session;
     this.onToken = onToken; // 스트리밍 토큰 콜백(있으면 실시간 출력)
     this.depth = depth; // 0=최상위, 1=서브에이전트(중첩 위임 불가)
     this.messages = [];
     this.usage = { input: 0, output: 0, total: 0, calls: 0 }; // 세션 누적 토큰(/status, /cost)
+    this.todos = []; // todo_write/read 도구의 세션 할일 목록
+    this.mode = "build"; // build(기본) | plan(읽기전용) | 커스텀 에이전트명
+    this.modePrompt = ""; // 에이전트/모드 추가 시스템 프롬프트
   }
 
   _emit(step, title = "", detail = "", data = {}) {
@@ -135,7 +139,7 @@ export class AgentLoop {
     const parts = [
       "# 정체성",
       "당신은 CDSA Harness(made by CDSA) 안에서 동작하는 코딩·업무 에이전트입니다.",
-      "작업 폴더의 파일을 도구(list_dir/read_file/search_files/edit_file/write_file)로 직접 읽고·검색하고·수정할 수 있습니다.",
+      "작업 폴더의 파일을 도구(read_file/glob/grep/edit_file/multi_edit/write_file 등)로 직접 읽고·검색하고·수정할 수 있으며, webfetch 로 웹 문서도 읽을 수 있습니다.",
       "'파일에 접근할 수 없다'고 답하지 마세요 — 필요한 도구를 호출하면 됩니다. 도구가 곧 당신의 손입니다.",
       "",
       "# 환경",
@@ -144,9 +148,14 @@ export class AgentLoop {
       `- 플랫폼: ${process.platform} · Node ${process.versions.node} · 오늘: ${now.toISOString().slice(0, 10)}(${day})`,
       "- 모든 도구는 작업 폴더 밖으로 나갈 수 없습니다(sandbox). 파일 수정·셸 실행은 사용자 승인 후에만 적용됩니다.",
       "",
+      this.mode !== "build" ? `# 모드: ${this.mode}` : null,
+      this.mode === "plan" ? "지금은 plan 모드 — 파일 변경·셸 실행이 금지된다. 조사(읽기/검색)만 하고, 구체적 실행 계획을 제시하라." : null,
+      this.modePrompt || null,
+      this.mode !== "build" ? "" : null,
       "# 도구 사용 원칙",
       "- 추측 금지: 파일 위치·내용이 불확실하면 먼저 search_files / list_dir / read_file 로 사실을 확인한다.",
-      "- 기존 파일의 일부 수정은 edit_file(old_text 는 파일에서 유일해야 함), 새 파일·전체 교체만 write_file 을 쓴다.",
+      "- 위치를 모르면 glob(파일명)·grep(내용 정규식)으로 찾는다. 일부 수정은 edit_file, 한 파일 여러 곳은 multi_edit, 새 파일·전체 교체만 write_file.",
+      "- 3단계 이상 작업은 todo_write 로 계획을 기록하고 진행하며 갱신한다. 꼭 필요한 결정만 question 으로 사용자에게 묻는다.",
       "- 도구가 오류를 돌려주면 같은 호출을 반복하지 말고, 오류 메시지를 읽고 접근을 바꾼다.",
       "- 사용자가 승인을 거부하면 그 의사를 존중하고 대안을 제시한다.",
       this.depth === 0
@@ -331,10 +340,45 @@ export class AgentLoop {
     return out;
   }
 
+  // 도구별 권한: config.permissions[도구] = allow|ask|deny (OpenCode 방식).
+  // 기본: 파일변경·셸·웹은 ask, 읽기는 allow. plan 모드에선 변경 도구가 deny.
+  _permission(name) {
+    if (this.mode === "plan" && (this.toolbox.isMutating(name) || name === "run_shell")) return "deny";
+    const p = (this.config.permissions || {})[name];
+    if (p === "allow" || p === "ask" || p === "deny") return p;
+    if (this.toolbox.isMutating(name) || name === "webfetch") return "ask";
+    return "allow";
+  }
+
+  _formatTodos() {
+    if (!this.todos.length) return "(할일 목록 비어 있음)";
+    const icon = { pending: "☐", in_progress: "◐", done: "☑" };
+    return this.todos.map((t, i) => `${icon[t.status] || "☐"} ${i + 1}. ${t.content}${t.status === "in_progress" ? " ←진행중" : ""}`).join("\n");
+  }
+
   async _handleToolCall(tc) {
     if (tc.name === "spawn_agent") return this._runSubAgent(tc);
+    if (tc.name === "todo_write") {
+      this.todos = (tc.args.todos || []).slice(0, 30).map((t) => ({ content: String(t.content || ""), status: t.status || "pending" }));
+      this._emit(Step.TOOL_RESULT, "할일 갱신", this._formatTodos());
+      return "할일 목록 갱신됨:\n" + this._formatTodos();
+    }
+    if (tc.name === "todo_read") return this._formatTodos();
+    if (tc.name === "question") {
+      const q = (tc.args.question || "").trim();
+      if (!q) return "question 오류: 질문이 비어 있습니다.";
+      if (!this.questionCallback) return "이 환경에선 사용자에게 질문할 수 없습니다. 합리적인 기본값으로 진행하세요.";
+      const ans = await this.questionCallback(q, tc.args.choices || null);
+      return ans === null || ans === "" ? "(사용자가 답하지 않음 — 합리적 기본값으로 진행)" : `사용자 답변: ${ans}`;
+    }
     const label = this.toolbox.label ? this.toolbox.label(tc.name) : TOOL_LABELS[tc.name] || tc.name;
-    const needsApproval = this.toolbox.isMutating(tc.name);
+    const perm = this._permission(tc.name);
+    if (perm === "deny") {
+      const why = this.mode === "plan" ? "plan 모드(읽기 전용)" : "권한 설정(deny)";
+      this._emit(Step.APPROVAL, `차단됨: ${label}`, `${why} 에 의해 이 도구는 사용할 수 없습니다.`);
+      return `'${label}' 도구는 ${why} 때문에 실행할 수 없습니다. 변경 없이 계획/설명으로 답하세요.`;
+    }
+    const needsApproval = perm === "ask";
 
     if (needsApproval && this.config.approval_mode === "manual") {
       const req = this._buildApprovalRequest(tc);
@@ -376,6 +420,13 @@ export class AgentLoop {
     if (tc.name === "edit_file") {
       const { path: p, diff } = this.toolbox.previewEdit(tc.args.path || "", tc.args.old_text || "", tc.args.new_text ?? "");
       return { toolName: "edit_file", toolLabel: TOOL_LABELS.edit_file, args: tc.args, path: p, diff };
+    }
+    if (tc.name === "multi_edit") {
+      const { path: p, diff } = this.toolbox.previewMultiEdit(tc.args.path || "", tc.args.edits || []);
+      return { toolName: "edit_file", toolLabel: TOOL_LABELS.multi_edit, args: tc.args, path: p, diff };
+    }
+    if (tc.name === "webfetch") {
+      return { toolName: "webfetch", toolLabel: TOOL_LABELS.webfetch, args: tc.args, command: `GET ${tc.args.url || ""}` };
     }
     if (tc.name === "run_shell") {
       return {

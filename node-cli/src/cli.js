@@ -799,12 +799,26 @@ export async function main(argv = []) {
     }
     process.stdout.write(c.green(chunk));
   };
+  // question 도구 → 사용자에게 직접 질문(선택지는 방향키 메뉴)
+  const questionCallback = async (q, choices) => {
+    console.log(panel(renderMarkdown(q), { title: "❓ 에이전트의 질문", color: "cyan" }));
+    if (choices && choices.length) {
+      const sel = await selectMenu(choices.map(String), { title: "답을 선택하세요" });
+      if (sel !== undefined) return sel;
+      const a = await ask(c.cyan(`답 (1-${choices.length} 또는 텍스트): `));
+      const n = parseInt((a || "").trim(), 10);
+      return Number.isInteger(n) && choices[n - 1] ? choices[n - 1] : (a || "").trim();
+    }
+    return ((await ask(c.cyan("답변: "))) || "").trim();
+  };
+
   const loop = new AgentLoop({
     config: cfg,
     client: makeClient(cfg),
     toolbox,
     onEvent: makePrinter(cfg, stream),
     approvalCallback: makeApproval(ask, cfg),
+    questionCallback,
     session,
     onToken,
   });
@@ -829,17 +843,58 @@ export async function main(argv = []) {
 
   // 대화 자동저장(/resume 용) + 멘션 확장을 겸하는 실행 헬퍼.
   const convPath = path.join(configDir(), "last_session.json");
+  const convDir = path.join(configDir(), "conversations");
+  const sessionId = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  let sessionTitle = "";
+
+  // 트리거 스킬(OpenHands 마이크로에이전트식): 입력에 트리거 단어가 있으면 그 스킬 지식을 자동 첨부
+  const applyTriggers = (text) => {
+    let out = text;
+    let count = 0;
+    for (const s of Object.values(skills)) {
+      if (count >= 2 || !s.triggers || !s.triggers.length) continue;
+      if (s.triggers.some((tr) => tr && text.includes(tr))) {
+        out += `\n\n[자동 참고 — /${s.name} 스킬]\n${s.body.replace(/\$ARGUMENTS/g, text).slice(0, 1500)}`;
+        console.log(c.dim(`🧩 트리거 스킬 자동 적용: /${s.name}`));
+        count++;
+      }
+    }
+    return out;
+  };
+
+  // 대화가 길어지면 모델에게 요약시켜 자동 압축(auto_compact_tokens, 0=끔)
+  const maybeAutoCompact = async () => {
+    const limit = cfg.auto_compact_tokens || 0;
+    if (!limit || cfg.provider === "mock") return;
+    const est = loop.contextSummary().estTokens;
+    if (est < limit) return;
+    console.log(c.dim(`🗜️  컨텍스트가 커져(≈${est} 토큰) 자동 압축합니다…`));
+    try {
+      const req = [...loop.messages, { role: "user", content: "지금까지의 대화를 다음 작업에 필요한 핵심(사실·결정·파일 변경·미완료 작업)만 남긴 한국어 요약으로. 요약문만 출력." }];
+      const r = await loop.client.chat(req, []);
+      const summary = (r.content || "").trim();
+      if (!summary) return;
+      loop.reset();
+      loop.messages.push({ role: "user", content: `[이전 대화 요약]\n${summary}` }, { role: "assistant", content: "요약을 확인했습니다. 이어서 진행하겠습니다." });
+      console.log(c.green(`🗜️  자동 압축 완료 (≈${est} → ${loop.contextSummary().estTokens} 토큰)`));
+    } catch { /* 실패 시 조용히 계속 */ }
+  };
+
   const runTurn = async (promptText) => {
+    if (!sessionTitle) sessionTitle = promptText.replace(/\s+/g, " ").slice(0, 40);
     rule();
     try {
-      await loop.run(expandMentions(promptText));
+      await loop.run(applyTriggers(expandMentions(promptText)));
     } catch (e) {
       console.log(c.red(`실행 오류: ${e?.message || e}`));
     }
     rule();
+    await maybeAutoCompact();
     try {
-      fs.mkdirSync(configDir(), { recursive: true });
-      fs.writeFileSync(convPath, JSON.stringify({ time: Date.now(), provider: cfg.provider, model: cfg.model, messages: loop.messages }), "utf8");
+      fs.mkdirSync(convDir, { recursive: true });
+      const payload = JSON.stringify({ time: Date.now(), title: sessionTitle, provider: cfg.provider, model: cfg.model, messages: loop.messages });
+      fs.writeFileSync(convPath, payload, "utf8"); // /resume (가장 최근)
+      fs.writeFileSync(path.join(convDir, `${sessionId}.json`), payload, "utf8"); // /sessions 목록용
     } catch { /* 저장 실패 무시 */ }
   };
 
@@ -871,6 +926,17 @@ export async function main(argv = []) {
     if (raw === null) break; // Ctrl+D / Ctrl+C / 스트림 종료
     const user = raw.trim();
     if (!user) continue;
+    // !명령 — 사용자가 직접 치는 셸 패스스루(모델 경유 없음)
+    if (user.startsWith("!") && user.length > 1) {
+      const cmd = user.slice(1);
+      try {
+        const out = execSync(cmd, { cwd: cfg.workspacePath(), encoding: "utf8", timeout: 60000, stdio: ["ignore", "pipe", "pipe"] });
+        console.log((out || "").trimEnd() || c.dim("(출력 없음)"));
+      } catch (e) {
+        console.log(((e.stdout || "") + (e.stderr || "")).trimEnd() || c.red(`실행 실패: ${e.message}`));
+      }
+      continue;
+    }
     const low = user.toLowerCase();
 
     if (["/quit", "/exit", "quit", "exit", ":q"].includes(low)) break;
@@ -997,6 +1063,58 @@ export async function main(argv = []) {
       }
       continue;
     }
+    // /redo — 되돌린 변경 다시 적용
+    if (low === "/redo") {
+      try { console.log(c.green(toolbox.redoLast().output)); } catch (e) { console.log(c.yellow(e.message)); }
+      continue;
+    }
+    // /todos — 에이전트의 할일 목록 보기
+    if (low === "/todos") {
+      console.log(panel(loop._formatTodos().split("\n"), { title: "☑ 에이전트 할일 (todo_write 도구가 관리)", color: "cyan" }));
+      continue;
+    }
+    // /agent — 모드/에이전트 전환: build(기본)·plan(읽기전용)·.cdsa/agents/*.md 커스텀
+    if (low === "/agent" || low.startsWith("/agent ")) {
+      const agentsDir = path.join(cfg.workspacePath(), ".cdsa", "agents");
+      const custom = [];
+      try {
+        for (const f of fs.readdirSync(agentsDir)) {
+          if (!f.endsWith(".md")) continue;
+          const raw = fs.readFileSync(path.join(agentsDir, f), "utf8");
+          const m = /^---\n([\s\S]*?)\n---\n?/.exec(raw);
+          const meta = {};
+          if (m) for (const ln of m[1].split("\n")) { const i = ln.indexOf(":"); if (i > 0) meta[ln.slice(0, i).trim()] = ln.slice(i + 1).trim(); }
+          custom.push({ name: f.replace(/\.md$/, ""), desc: meta.description || "", body: m ? raw.slice(m[0].length).trim() : raw.trim() });
+        }
+      } catch { /* 폴더 없음 */ }
+      const items = [
+        `build — 기본(모든 도구 사용)`,
+        `plan — 읽기 전용, 실행 계획만 (OpenCode Plan 모드)`,
+        ...custom.map((a) => `${a.name} — ${a.desc || "커스텀 에이전트"}`),
+      ];
+      const argName = user.split(/\s+/)[1];
+      let picked = argName || null;
+      if (!picked) {
+        const sel = await selectMenu(items, { title: `🎭 에이전트/모드 선택 (현재: ${loop.mode})`, current: items.find((i) => i.startsWith(loop.mode + " ")) });
+        if (sel === null) continue;
+        if (sel !== undefined) picked = sel.split(" ")[0];
+        else {
+          const a2 = await ask(c.cyan(`모드 [build/plan${custom.length ? "/" + custom.map((x) => x.name).join("/") : ""}]: `));
+          picked = (a2 || "").trim();
+        }
+      }
+      if (!picked) continue;
+      const cu = custom.find((a) => a.name === picked);
+      if (picked === "build" || picked === "plan" || cu) {
+        loop.mode = picked;
+        loop.modePrompt = cu ? cu.body : "";
+        loop.refreshSystemPrompt();
+        console.log(c.green(`에이전트 모드 → ${picked}`) + (picked === "plan" ? c.dim("  (파일 변경·셸 차단, 계획만)") : ""));
+      } else {
+        console.log(c.yellow(`알 수 없는 모드: ${picked}`));
+      }
+      continue;
+    }
     // /auto — 자동 수락 토글(신뢰 전환). Claude Code 의 auto-accept 에 해당.
     if (low === "/auto") {
       cfg.approval_mode = cfg.approval_mode === "auto" ? "manual" : "auto";
@@ -1092,7 +1210,39 @@ export async function main(argv = []) {
       );
       continue;
     }
-    if (low === "/sessions") { console.log(c.dim(`세션 로그: ${sessionsDir()}`)); continue; }
+    if (low === "/sessions") {
+      let files = [];
+      try {
+        files = fs.readdirSync(convDir).filter((f) => f.endsWith(".json"))
+          .map((f) => { const st = fs.statSync(path.join(convDir, f)); return { f, m: st.mtimeMs }; })
+          .sort((a, b) => b.m - a.m).slice(0, 20);
+      } catch { /* 없음 */ }
+      if (!files.length) { console.log(c.dim(`저장된 대화가 없습니다. (로그: ${sessionsDir()})`)); continue; }
+      const metas = files.map(({ f }) => {
+        try {
+          const d = JSON.parse(fs.readFileSync(path.join(convDir, f), "utf8"));
+          return { f, label: `${(d.title || "(제목 없음)").slice(0, 34)}  ·  ${new Date(d.time).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · ${d.messages?.length || 0}msg` };
+        } catch { return { f, label: f }; }
+      });
+      const sel = await selectMenu(metas.map((m) => m.label), { title: "🗂 지난 대화 — 골라서 이어가기" });
+      let chosen = null;
+      if (sel !== undefined && sel !== null) chosen = metas.find((m) => m.label === sel);
+      else if (sel === undefined) {
+        metas.forEach((m, i) => console.log(`  ${c.bold(String(i + 1))}) ${m.label}`));
+        const a = await ask(c.cyan("번호 (엔터=취소): "));
+        const n = parseInt((a || "").trim(), 10);
+        if (Number.isInteger(n) && metas[n - 1]) chosen = metas[n - 1];
+      }
+      if (chosen) {
+        try {
+          const d = JSON.parse(fs.readFileSync(path.join(convDir, chosen.f), "utf8"));
+          loop.messages = d.messages || [];
+          sessionTitle = d.title || "";
+          console.log(c.green(`대화 복원: ${d.title || chosen.f} (메시지 ${loop.messages.length}개)`));
+        } catch (e) { console.log(c.yellow(`복원 실패: ${e.message}`)); }
+      }
+      continue;
+    }
     if (low === "/teach") {
       cfg.teach_mode = !cfg.teach_mode;
       console.log(c.green(`교육 모드 ${cfg.teach_mode ? "ON" : "OFF"}.`));

@@ -417,6 +417,83 @@ test("workspace 는 저장되지 않고, 파일의 옛 값은 무시된다(실�
   }
 });
 
+test("glob/grep: 패턴 파일찾기 + 정규식 내용검색", () => {
+  const ws = tmpWs();
+  fs.mkdirSync(path.join(ws, "src"), { recursive: true });
+  fs.writeFileSync(path.join(ws, "src", "app.js"), "const answer = 42;\nfunction hello() {}", "utf8");
+  fs.writeFileSync(path.join(ws, "readme.md"), "hello world", "utf8");
+  const tb = new Toolbox(ws);
+  assert.match(tb.globFiles("**/*.js").output, /src\/app\.js/);
+  assert.ok(!tb.globFiles("*.md").output.includes("app.js"));
+  const g = tb.grepFiles("answer\\s*=\\s*\\d+").output;
+  assert.match(g, /src\/app\.js:1/);
+  assert.match(tb.grepFiles("hello", ".", "**/*.md").output, /readme\.md/);
+  assert.ok(!tb.grepFiles("hello", ".", "**/*.md").output.includes("app.js"), "glob 필터 동작");
+});
+
+test("multi_edit: 전부 성공해야 적용(원자성) + 다단계 undo/redo", () => {
+  const ws = tmpWs();
+  fs.writeFileSync(path.join(ws, "f.txt"), "AAA\nBBB\nCCC", "utf8");
+  const tb = new Toolbox(ws);
+  // 하나라도 실패하면 파일 불변
+  assert.throws(() => tb.multiEdit("f.txt", [{ old_text: "AAA", new_text: "aaa" }, { old_text: "없음", new_text: "x" }]), /찾지 못했/);
+  assert.strictEqual(fs.readFileSync(path.join(ws, "f.txt"), "utf8"), "AAA\nBBB\nCCC");
+  // 성공 케이스
+  tb.multiEdit("f.txt", [{ old_text: "AAA", new_text: "111" }, { old_text: "CCC", new_text: "333" }]);
+  assert.strictEqual(fs.readFileSync(path.join(ws, "f.txt"), "utf8"), "111\nBBB\n333");
+  // 추가 변경 → 다단계 undo
+  tb.writeFile("f.txt", "최종");
+  tb.undoLast(); // 최종 → multi 결과
+  assert.strictEqual(fs.readFileSync(path.join(ws, "f.txt"), "utf8"), "111\nBBB\n333");
+  tb.undoLast(); // → 원본
+  assert.strictEqual(fs.readFileSync(path.join(ws, "f.txt"), "utf8"), "AAA\nBBB\nCCC");
+  tb.redoLast(); // → multi 결과
+  assert.strictEqual(fs.readFileSync(path.join(ws, "f.txt"), "utf8"), "111\nBBB\n333");
+});
+
+test("권한(permissions): deny 차단 + plan 모드 읽기전용 + todo/question 도구", async () => {
+  const ws = tmpWs();
+  fs.writeFileSync(path.join(ws, "x.txt"), "내용", "utf8");
+  let call = 0;
+  const fake = {
+    chat: async () => {
+      call++;
+      if (call === 1) return { content: "", toolCalls: [
+        { id: "1", name: "run_shell", args: { command: "ls" } },
+        { id: "2", name: "write_file", args: { path: "x.txt", content: "변경" } },
+        { id: "3", name: "todo_write", args: { todos: [{ content: "1단계", status: "in_progress" }] } },
+        { id: "4", name: "question", args: { question: "계속할까요?", choices: ["네", "아니오"] } },
+      ], usage: null, latencyMs: 1, request: {} };
+      return { content: "끝", toolCalls: [], usage: null, latencyMs: 1, request: {} };
+    },
+  };
+  const loop = new AgentLoop({
+    config: new Config({ provider: "mock", workspace: ws, max_steps: 3, permissions: { run_shell: "deny" } }),
+    client: fake,
+    toolbox: new Toolbox(ws, true),
+    onEvent: () => {},
+    approvalCallback: async () => ({ approved: true }),
+    questionCallback: async (q, choices) => { assert.deepStrictEqual(choices, ["네", "아니오"]); return "네"; },
+  });
+  loop.mode = "plan"; // 읽기전용 모드
+  await loop.run("작업");
+  const toolMsgs = loop.messages.filter((m) => m.role === "tool").map((m) => m.content);
+  assert.match(toolMsgs[0], /deny|plan/, "run_shell 차단");
+  assert.match(toolMsgs[1], /plan 모드/, "plan 모드에서 write_file 차단");
+  assert.strictEqual(fs.readFileSync(path.join(ws, "x.txt"), "utf8"), "내용", "파일 불변");
+  assert.match(toolMsgs[2], /1단계/, "todo 기록");
+  assert.strictEqual(loop.todos.length, 1);
+  assert.match(toolMsgs[3], /사용자 답변: 네/, "question 도구");
+});
+
+test("트리거 스킬: frontmatter triggers 파싱", () => {
+  const ws = tmpWs();
+  fs.mkdirSync(path.join(ws, ".cdsa", "skills"), { recursive: true });
+  fs.writeFileSync(path.join(ws, ".cdsa", "skills", "mw.md"), "---\ndescription: d\ntriggers: 민원, 항의\n---\n지식", "utf8");
+  const sk = loadSkills(ws);
+  assert.deepStrictEqual(sk.mw.triggers, ["민원", "항의"]);
+});
+
 test("거부하면 파일은 그대로다", async () => {
   const ws = tmpWs();
   const original = "건드리면 안 됨\n";

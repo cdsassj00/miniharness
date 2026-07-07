@@ -9,13 +9,20 @@ export const TOOL_LABELS = {
   read_file: "파일 읽기",
   write_file: "파일 쓰기",
   edit_file: "부분 수정",
+  multi_edit: "복수 부분수정",
   search_files: "파일 검색",
+  glob: "패턴 파일찾기",
+  grep: "정규식 검색",
+  webfetch: "웹 읽기",
   run_shell: "셸 실행",
   spawn_agent: "서브에이전트",
+  todo_write: "할일 기록",
+  todo_read: "할일 보기",
+  question: "사용자에게 질문",
 };
 
 // 사용자 승인이 필요한(환경을 바꾸는) 도구
-export const MUTATING_TOOLS = new Set(["write_file", "edit_file", "run_shell"]);
+export const MUTATING_TOOLS = new Set(["write_file", "edit_file", "multi_edit", "run_shell"]);
 
 export class ToolError extends Error {}
 
@@ -135,25 +142,49 @@ export class Toolbox {
     return { path: this.rel(target), diff };
   }
 
-  // /undo 용: 마지막 파일 변경 1건을 기억해 되돌릴 수 있게 한다(단순 프리미티브).
+  // 다단계 undo/redo — 변경 전 스냅샷을 스택에 쌓는다(최대 50). OpenCode /undo /redo 대응.
   _backup(target) {
-    this.lastChange = {
+    this.undoStack = this.undoStack || [];
+    this.redoStack = [];
+    this.undoStack.push({
       target,
       rel: this.rel(target),
       old: fs.existsSync(target) ? fs.readFileSync(target, "utf8") : null, // null = 새 파일이었음
-    };
+    });
+    if (this.undoStack.length > 50) this.undoStack.shift();
+  }
+
+  _applySnapshot(snap, intoStack) {
+    const cur = fs.existsSync(snap.target) ? fs.readFileSync(snap.target, "utf8") : null;
+    intoStack.push({ target: snap.target, rel: snap.rel, old: cur });
+    if (snap.old === null) {
+      fs.rmSync(snap.target, { force: true });
+      return `${snap.rel} 생성을 취소했습니다(파일 삭제).`;
+    }
+    fs.mkdirSync(path.dirname(snap.target), { recursive: true });
+    fs.writeFileSync(snap.target, snap.old, "utf8");
+    return `${snap.rel} 을 이전 상태로 되돌렸습니다.`;
   }
 
   undoLast() {
-    if (!this.lastChange) throw new ToolError("되돌릴 파일 변경이 없습니다.");
-    const { target, rel, old } = this.lastChange;
-    this.lastChange = null;
-    if (old === null) {
-      fs.rmSync(target, { force: true });
-      return { ok: true, output: `${rel} 생성을 취소했습니다(파일 삭제).` };
+    if (!this.undoStack || !this.undoStack.length) throw new ToolError("되돌릴 파일 변경이 없습니다.");
+    this.redoStack = this.redoStack || [];
+    const msg = this._applySnapshot(this.undoStack.pop(), this.redoStack);
+    return { ok: true, output: msg + ` (undo 남은 ${this.undoStack.length} · redo 가능 ${this.redoStack.length})` };
+  }
+
+  redoLast() {
+    if (!this.redoStack || !this.redoStack.length) throw new ToolError("다시 적용할 변경이 없습니다.");
+    this.undoStack = this.undoStack || [];
+    const snap = this.redoStack.pop();
+    const cur = fs.existsSync(snap.target) ? fs.readFileSync(snap.target, "utf8") : null;
+    this.undoStack.push({ target: snap.target, rel: snap.rel, old: cur });
+    if (snap.old === null) fs.rmSync(snap.target, { force: true });
+    else {
+      fs.mkdirSync(path.dirname(snap.target), { recursive: true });
+      fs.writeFileSync(snap.target, snap.old, "utf8");
     }
-    fs.writeFileSync(target, old, "utf8");
-    return { ok: true, output: `${rel} 을 마지막 변경 이전 상태로 되돌렸습니다.` };
+    return { ok: true, output: `${snap.rel} 변경을 다시 적용했습니다. (undo ${this.undoStack.length} · redo ${this.redoStack.length})` };
   }
 
   writeFile(rel, content) {
@@ -255,6 +286,136 @@ export class Toolbox {
     return { ok: true, output: parts.join("\n\n") || `'${query}' 검색 결과가 없습니다.` };
   }
 
+  // 한 파일에 여러 부분수정을 원자적으로(전부 성공해야 적용, 승인 1회) — OpenCode patch 대응.
+  _computeMultiEdit(rel, edits) {
+    const target = this._resolve(rel);
+    if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new ToolError(`파일이 없습니다: ${rel}`);
+    if (!Array.isArray(edits) || !edits.length) throw new ToolError("edits 배열이 비어 있습니다.");
+    const orig = fs.readFileSync(target, "utf8");
+    let cur = orig;
+    edits.forEach((e, i) => {
+      const o = e.old_text ?? "";
+      if (!o) throw new ToolError(`edits[${i}]: old_text 가 비어 있습니다.`);
+      const cnt = cur.split(o).length - 1;
+      if (cnt === 0) throw new ToolError(`edits[${i}]: old_text 를 찾지 못했습니다.`);
+      if (cnt > 1) throw new ToolError(`edits[${i}]: old_text 가 ${cnt}번 일치 — 더 길게 지정하세요.`);
+      cur = cur.replace(o, e.new_text ?? "");
+    });
+    return { target, orig, next: cur };
+  }
+
+  previewMultiEdit(rel, edits) {
+    try {
+      const { target, orig, next } = this._computeMultiEdit(rel, edits);
+      return { path: this.rel(target), diff: diffLines(orig, next).filter((l) => !l.startsWith(" ")).join("\n") || "(변화 없음)" };
+    } catch (e) {
+      return { path: rel, diff: `(미리보기 불가: ${e.message})` };
+    }
+  }
+
+  multiEdit(rel, edits) {
+    const { target, next } = this._computeMultiEdit(rel, edits);
+    this._backup(target);
+    fs.writeFileSync(target, next, "utf8");
+    return { ok: true, output: `${this.rel(target)} 에 ${edits.length}건 부분수정 적용 완료.` };
+  }
+
+  // glob 패턴 → 정규식 (** = 깊이무관, * = 세그먼트 내, ? = 한 글자)
+  _globToRe(pattern) {
+    let re = "";
+    for (let i = 0; i < pattern.length; i++) {
+      const ch = pattern[i];
+      if (ch === "*") {
+        if (pattern[i + 1] === "*") { re += "(?:.*)"; i++; if (pattern[i + 1] === "/") i++; }
+        else re += "[^/]*";
+      } else if (ch === "?") re += "[^/]";
+      else re += ch.replace(/[.+^$()|[\]{}\\]/g, "\\$&");
+    }
+    return new RegExp("^" + re + "$");
+  }
+
+  _walkFiles(sub, cb) {
+    const SKIP = new Set(["node_modules", ".git", "dist", "build", "__pycache__", ".venv"]);
+    const rootDir = this._resolve(sub);
+    const stack = [rootDir];
+    let visited = 0;
+    while (stack.length && visited < 5000) {
+      const dir = stack.pop();
+      let entries = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (!SKIP.has(e.name) && !e.name.startsWith(".")) stack.push(full);
+        } else {
+          visited++;
+          if (cb(full, this.rel(full).replace(/\\/g, "/")) === false) return;
+        }
+      }
+    }
+  }
+
+  globFiles(pattern, sub = ".") {
+    if (!pattern || !pattern.trim()) throw new ToolError("pattern 이 비어 있습니다.");
+    const re = this._globToRe(pattern.trim());
+    const hits = [];
+    this._walkFiles(sub, (full, rel) => {
+      if (re.test(rel) || re.test(path.basename(rel))) {
+        let mtime = 0;
+        try { mtime = fs.statSync(full).mtimeMs; } catch { /* */ }
+        hits.push({ rel, mtime });
+        if (hits.length >= 200) return false;
+      }
+    });
+    hits.sort((a, b) => b.mtime - a.mtime);
+    const out = hits.slice(0, 100).map((h) => h.rel).join("\n");
+    return { ok: true, output: out || `'${pattern}' 에 맞는 파일이 없습니다.` };
+  }
+
+  grepFiles(pattern, sub = ".", fileGlob = "") {
+    if (!pattern || !pattern.trim()) throw new ToolError("pattern 이 비어 있습니다.");
+    let re;
+    try { re = new RegExp(pattern, "i"); } catch (e) { throw new ToolError(`정규식 오류: ${e.message}`); }
+    const fileRe = fileGlob ? this._globToRe(fileGlob) : null;
+    const hits = [];
+    this._walkFiles(sub, (full, rel) => {
+      if (fileRe && !fileRe.test(rel) && !fileRe.test(path.basename(rel))) return;
+      let st; try { st = fs.statSync(full); } catch { return; }
+      if (st.size > 512 * 1024) return;
+      let text; try { text = fs.readFileSync(full, "utf8"); } catch { return; }
+      if (text.includes("\u0000")) return;
+      const lines = text.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        if (re.test(lines[i])) {
+          hits.push(`${rel}:${i + 1}  ${lines[i].trim().slice(0, 140)}`);
+          if (hits.length >= 60) return false;
+        }
+      }
+    });
+    return { ok: true, output: hits.join("\n") || `/${pattern}/ 일치 없음.` };
+  }
+
+  // 웹 페이지 텍스트 읽기(태그 제거). 폐쇄망이면 네트워크 오류를 정중히 반환.
+  async webFetch(url) {
+    if (!/^https?:\/\//i.test(url || "")) throw new ToolError("http(s) URL 이 필요합니다.");
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    let res;
+    try {
+      res = await fetch(url, { signal: ctrl.signal, headers: { "user-agent": "cdsa-harness" } });
+    } catch (e) {
+      throw new ToolError(`웹 요청 실패: ${e.message} (폐쇄망일 수 있음)`);
+    } finally { clearTimeout(timer); }
+    if (!res.ok) throw new ToolError(`HTTP ${res.status}`);
+    let text = await res.text();
+    text = text
+      .replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    if (text.length > 8000) text = text.slice(0, 8000) + "\n... (이후 생략)";
+    return { ok: true, output: `[${url}]\n${text || "(본문 없음)"}` };
+  }
+
   runShell(command) {
     if (!this.allowShell) {
       throw new ToolError("셸 실행이 설정에서 비활성화되어 있습니다(allow_shell=false).");
@@ -283,7 +444,11 @@ export class Toolbox {
     if (name === "read_file") return this.readFile(args.path || "");
     if (name === "write_file") return this.writeFile(args.path || "", args.content || "");
     if (name === "edit_file") return this.editFile(args.path || "", args.old_text || "", args.new_text ?? "");
+    if (name === "multi_edit") return this.multiEdit(args.path || "", args.edits || []);
     if (name === "search_files") return this.searchFiles(args.query || "", args.path || ".");
+    if (name === "glob") return this.globFiles(args.pattern || "", args.path || ".");
+    if (name === "grep") return this.grepFiles(args.pattern || "", args.path || ".", args.glob || "");
+    if (name === "webfetch") return this.webFetch(args.url || "");
     if (name === "run_shell") return this.runShell(args.command || "");
     const plugin = this._pluginMap.get(name);
     if (plugin) {
@@ -391,6 +556,68 @@ export function toolSchemas(allowShell = false, plugins = []) {
       },
     });
   }
+  schemas.push(
+    {
+      type: "function",
+      function: {
+        name: "multi_edit",
+        description: "한 파일에 여러 부분수정을 한 번에 적용한다(전부 성공해야 적용, 승인 1회). 같은 파일을 여러 곳 고칠 때 edit_file 반복 대신 사용.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "수정할 파일 상대 경로" },
+            edits: { type: "array", items: { type: "object", properties: { old_text: { type: "string" }, new_text: { type: "string" } }, required: ["old_text", "new_text"] }, description: "순서대로 적용할 치환 목록" },
+          },
+          required: ["path", "edits"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "glob",
+        description: "글롭 패턴으로 파일을 찾는다(예: **/*.js, docs/*.md). 최신 수정순.",
+        parameters: { type: "object", properties: { pattern: { type: "string" }, path: { type: "string", description: "시작 폴더(기본 .)" } }, required: ["pattern"] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "grep",
+        description: "정규식으로 파일 내용을 검색한다. glob 인자로 대상 파일을 좁힐 수 있다.",
+        parameters: { type: "object", properties: { pattern: { type: "string", description: "정규식" }, path: { type: "string" }, glob: { type: "string", description: "대상 파일 글롭(선택)" } }, required: ["pattern"] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "webfetch",
+        description: "웹 페이지(URL)를 가져와 텍스트로 읽는다. 문서·자료 확인용. 사용자 승인 후 실행된다.",
+        parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "todo_write",
+        description: "여러 단계 작업의 할일 목록을 기록/갱신한다. 3단계 이상 작업을 시작할 때, 그리고 각 단계 완료 시 상태를 갱신하라.",
+        parameters: {
+          type: "object",
+          properties: { todos: { type: "array", items: { type: "object", properties: { content: { type: "string" }, status: { type: "string", enum: ["pending", "in_progress", "done"] } }, required: ["content", "status"] } } },
+          required: ["todos"],
+        },
+      },
+    },
+    { type: "function", function: { name: "todo_read", description: "현재 할일 목록을 읽는다.", parameters: { type: "object", properties: {} } } },
+    {
+      type: "function",
+      function: {
+        name: "question",
+        description: "작업 진행에 꼭 필요한 결정을 사용자에게 직접 묻는다. 선택지가 있으면 choices 로 제공. 남용하지 말 것.",
+        parameters: { type: "object", properties: { question: { type: "string" }, choices: { type: "array", items: { type: "string" }, description: "선택지(선택)" } }, required: ["question"] },
+      },
+    }
+  );
   // 플러그인이 제공하는 도구를 모델에게도 노출한다.
   for (const p of plugins) {
     if (!p || !p.name || typeof p.handler !== "function") continue;

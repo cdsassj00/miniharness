@@ -25,7 +25,7 @@ const skills = [];
 for (const f of fs.existsSync(skillsDir) ? fs.readdirSync(skillsDir).sort() : []) {
   if (!f.endsWith(".md")) continue;
   const { meta, body } = parseFrontmatter(fs.readFileSync(path.join(skillsDir, f), "utf8"));
-  skills.push({ name: f.replace(/\.md$/, ""), description: meta.description || "", hint: meta["argument-hint"] || "", body });
+  skills.push({ name: f.replace(/\.md$/, ""), description: meta.description || "", hint: meta["argument-hint"] || "", triggers: (meta.triggers || "").split(",").map((s) => s.trim()).filter(Boolean), body });
 }
 
 // 플러그인 파일 수집(정적 import 로 묶이게 한다)

@@ -48,6 +48,8 @@ const DEFAULTS = {
   update_check: true, // 시작 시 새 버전 확인(하루 1회, 실패 시 조용히 무시)
   plugins: [], // 추가로 불러올 npm 플러그인 패키지 이름(이름 규칙과 무관하게 강제 로드)
   mcpServers: {}, // MCP 서버 설정 (Claude Code/Cursor 와 동일한 형식)
+  permissions: {}, // 도구별 권한: { "run_shell": "allow"|"ask"|"deny", ... } (OpenCode 방식)
+  auto_compact_tokens: 12000, // 추정 토큰이 이 값을 넘으면 대화 자동 압축(0=끔)
 };
 
 export function configDir() {

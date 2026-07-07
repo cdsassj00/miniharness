@@ -198,9 +198,17 @@ function makeApproval(ask, cfg) {
     } else {
       console.log(panel([JSON.stringify(req.args)], { title: `🔐 ${req.toolLabel}`, color: "yellow" }));
     }
-    const raw = await ask(c.yellow("이 작업을 승인하시겠습니까? [y/N] "));
+    const raw = await ask(c.yellow("승인할까요? ") + c.green("[y=승인") + c.yellow(" / n=거부 / ") + c.cyan("a=승인+이후 자동수락]") + " ");
     const ans = (raw || "").trim().toLowerCase();
+    if (ans === "a" || ans === "always") {
+      cfg.approval_mode = "auto";
+      console.log(c.green("✅ 승인 + 자동 수락 ON — 이후엔 묻지 않아요. (해제: /auto)"));
+      return { approved: true, reason: "" };
+    }
     const approved = ans === "y" || ans === "yes";
+    if (!approved) {
+      console.log(c.yellow("→ 거부로 처리했어요.") + c.dim("  (엔터는 거부예요 — 승인은 y, 항상 승인은 a 또는 /auto)"));
+    }
     streak = approved ? streak + 1 : 0;
     if (approved && streak >= 3 && !hinted && cfg.approval_mode === "manual") {
       hinted = true;
@@ -376,7 +384,7 @@ function printIntro(cfg) {
   const lines = rows.map(([k, v]) => `${c.grey(k.padEnd(9))}  ${c.bold(v)}`);
   console.log(panel(lines, { title: "⚙️  CDSA Harness 설정", color: "cyan" }));
   console.log(
-    c.bold(c.cyan("👉 처음이세요?  /guide ")) + c.dim("입력하면 빠른 시작 안내가 떠요.")
+    c.bold(c.cyan("👉 처음이세요?  /guide ")) + c.dim("· '/' 만 치면 명령 팔레트 · ") + c.cyan("Tab") + c.dim(" 키로 /명령·@파일 자동완성")
   );
   console.log(
     c.dim("명령: ") +
@@ -871,6 +879,21 @@ export async function main(argv = []) {
     const low = user.toLowerCase();
 
     if (["/quit", "/exit", "quit", "exit", ":q"].includes(low)) break;
+    if (user === "/") {
+      const skillNames = Object.keys(skills).sort();
+      console.log(panel([
+        c.bold("대화")+"      "+c.cyan("/new /compact /resume /undo /context"),
+        c.bold("프로젝트")+"  "+c.cyan("/init /memory /workspace"),
+        c.bold("모델·설정")+" "+c.cyan("/setup /models /model /provider /auto /status /teach /stream /update"),
+        c.bold("확장")+"      "+c.cyan("/skills /plugins /mcp"),
+        c.bold("기타")+"      "+c.cyan("/guide /tutorial /about /config /quit"),
+        "",
+        c.bold(`스킬 ${skillNames.length}개`)+"  "+c.grey(skillNames.slice(0,10).map(s=>"/"+s).join(" ")+(skillNames.length>10?" …":"")),
+        "",
+        c.dim("💡 Tab 키로 자동완성 — 예: /mi[Tab], /provider o[Tab], @파일[Tab]"),
+      ], { title: "⌨️  명령 팔레트", color: "cyan" }));
+      continue;
+    }
     if (low === "/help") { printHelp(); continue; }
     if (low === "/guide" || low === "/start") { printGuide(); continue; }
     if (low === "/tutorial") { await runTutorial(ask); continue; }
@@ -1161,7 +1184,14 @@ export async function main(argv = []) {
         console.log(c.dim(`(스킬 '/${name}' 실행)`));
         await runTurn(renderSkill(skills[name], argStr));
       } else {
-        console.log(c.yellow(`알 수 없는 명령/스킬: /${name} — ${c.cyan("/help")}, ${c.cyan("/skills")} 참고`));
+        const { BUILTIN_COMMANDS } = await import("./completion.js");
+        const all = [...BUILTIN_COMMANDS, ...Object.keys(skills).map((s) => "/" + s)];
+        const near = all.filter((n) => n.includes(name.slice(0, 3)) || n.slice(1).startsWith(name[0] || "")).slice(0, 4);
+        console.log(
+          c.yellow(`알 수 없는 명령: /${name}`) +
+            (near.length ? c.dim("  혹시? ") + c.cyan(near.join(" ")) : "") +
+            c.dim("  · '/' 입력=팔레트 · Tab=자동완성")
+        );
       }
       continue;
     }

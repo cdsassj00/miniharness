@@ -11,6 +11,7 @@ export const TOOL_LABELS = {
   edit_file: "부분 수정",
   search_files: "파일 검색",
   run_shell: "셸 실행",
+  spawn_agent: "서브에이전트",
 };
 
 // 사용자 승인이 필요한(환경을 바꾸는) 도구

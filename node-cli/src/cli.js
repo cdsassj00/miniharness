@@ -17,7 +17,7 @@ import {
   loadConfig,
   saveConfig,
 } from "./config.js";
-import { execFileSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 
 import { AgentLoop, Step } from "./loop.js";
 import { LLMClient } from "./llm.js";
@@ -87,8 +87,8 @@ function printTeach(ev, stream) {
         lines.push(`  ${roleColor(m.role.padEnd(9))} ${c.grey(`${m.chars}자${m.extra || ""}`)}`);
       }
       lines.push(c.grey(`제공 도구(${d.tools?.length || 0}): ${(d.tools || []).join(", ")}`));
-      console.log(panel(lines, { title: `🧠 ② LLM 호출 — 반복 ${d.iteration}`, color: "magenta" }));
-      if (d.systemPrompt) {
+      console.log(panel(lines, { title: `${d.sub ? "┆ " : ""}🧠 ② LLM 호출 — 반복 ${d.iteration}`, color: "magenta" }));
+      if (d.systemPrompt && !d.sub) {
         console.log(panel(clip(d.systemPrompt, 600).split("\n"), {
           title: "📜 시스템 프롬프트 (규칙+폴더가 여기 주입됨)",
           color: "grey",
@@ -119,7 +119,7 @@ function printTeach(ev, stream) {
       const meta = replyMetaLine(d);
       if (meta) lines.push(c.grey("─ " + meta));
       else lines.push(c.dim("(mock: 토큰/지연 측정 없음)"));
-      console.log(panel(lines.length ? lines : ["(빈 응답)"], { title: "🤖 ③ 모델 응답 (원본 판단)", color: "green" }));
+      console.log(panel(lines.length ? lines : ["(빈 응답)"], { title: `${d.sub ? "┆ " : ""}🤖 ③ 모델 응답 (원본 판단)`, color: "green" }));
       return;
     }
 
@@ -145,6 +145,7 @@ function printTeach(ev, stream) {
       return;
 
     case Step.DONE:
+      if (d.sub) { console.log(c.grey("┆ ") + c.green("✅ 서브에이전트 완료")); return; }
       console.log(panel(renderMarkdown(ev.detail || "완료"), { title: "✅ 완료", color: "green" }));
       return;
 
@@ -166,10 +167,13 @@ function printCompact(ev, stream) {
       for (const tc of d.toolCalls || []) console.log(c.yellow(`  ↳ ${tc.name}(${clip(JSON.stringify(tc.args), 120)})`));
       return;
     }
-    if (ev.detail && ev.detail !== "(텍스트 없음)") console.log(panel(renderMarkdown(ev.detail), { title: "🤖 모델", color: "green" }));
+    if (ev.detail && ev.detail !== "(텍스트 없음)") console.log(panel(renderMarkdown(ev.detail), { title: `${d.sub ? "┆ " : ""}🤖 모델`, color: "green" }));
     return;
   }
-  if (ev.step === Step.DONE) return console.log(panel(renderMarkdown(ev.detail || "완료"), { title: "✅ 완료", color: "green" }));
+  if (ev.step === Step.DONE) {
+    if (ev.data && ev.data.sub) return console.log(c.grey("┆ ") + c.green("✅ 서브에이전트 완료"));
+    return console.log(panel(renderMarkdown(ev.detail || "완료"), { title: "✅ 완료", color: "green" }));
+  }
   if (ev.step === Step.ERROR) return console.log(panel((ev.detail || "").split("\n"), { title: `❌ ${ev.title}`, color: "red" }));
   if (ev.step === Step.FEEDBACK) return;
   let detail = clip((ev.detail || "").trim().replace(/\s+/g, " "), 110);
@@ -408,7 +412,7 @@ function printHelp() {
         "",
         c.bold("모델·설정"),
         `  ${c.cyan("/setup")} 연결 마법사 · ${c.cyan("/model")} <이름> 변경 · ${c.cyan("/models")} 목록(ollama 는 설치분) · ${c.cyan("/provider")} 전환`,
-        `  ${c.cyan("/auto")} 자동 수락 토글 · ${c.cyan("/status")}(=/cost) 상태·누적 토큰 · ${c.cyan("/config")} 설정값`,
+        `  ${c.cyan("/auto")} 자동 수락 토글 · ${c.cyan("/status")}(=/cost) 상태·누적 토큰 · ${c.cyan("/update")} 자기 업데이트`,
         `  ${c.cyan("/teach")} 내부과정 펼치기 · ${c.cyan("/stream")} 실시간 출력 · ${c.cyan("/color")} 색상`,
         "",
         c.bold("확장"),
@@ -668,7 +672,7 @@ export async function main(argv = []) {
   if (newer) {
     console.log(
       c.yellow(`⬆️  새 버전 v${newer} 가 나왔어요!`) +
-        c.dim(`  업데이트: npm i -g cdsa-harness@latest  ·  exe 는 Releases 에서 새로 받기`) +
+        c.dim(`  지금 바로: `) + c.cyan("/update") + c.dim(` · exe 는 Releases 에서 새로 받기`) +
         "\n"
     );
   }
@@ -855,6 +859,27 @@ export async function main(argv = []) {
         console.log(c.green(toolbox.undoLast().output));
       } catch (e) {
         console.log(c.yellow(e.message));
+      }
+      continue;
+    }
+    // /update — 자기 자신을 최신 버전으로 업데이트(npm 설치본). exe 는 다운로드 안내.
+    if (low === "/update") {
+      let isSea = false;
+      try {
+        isSea = (await import("node:sea")).isSea();
+      } catch { /* 구버전 Node — SEA 아님 */ }
+      if (isSea) {
+        console.log(c.yellow("단일 실행파일(exe) 버전은 파일 교체 방식이라 자동 업데이트가 없어요."));
+        console.log(c.dim("최신 exe 다운로드: ") + c.cyan("https://github.com/cdsassj00/miniharness/releases/latest"));
+        continue;
+      }
+      console.log(c.cyan("최신 버전으로 업데이트합니다… (npm i -g cdsa-harness@latest)"));
+      try {
+        execSync("npm i -g cdsa-harness@latest", { stdio: "inherit" });
+        console.log(c.green("✅ 업데이트 완료! /quit 후 다시 실행하면 새 버전이 적용됩니다."));
+      } catch (e) {
+        console.log(c.red(`업데이트 실패: ${e.message}`));
+        console.log(c.dim("직접 실행: npm i -g cdsa-harness@latest"));
       }
       continue;
     }

@@ -62,6 +62,24 @@ function summarizeMessages(messages) {
   return { rows, totalChars, estTokens: estimateTokens(messages.map((m) => (m.content || "") + JSON.stringify(m.tool_calls || "")).join("")) };
 }
 
+// 서브에이전트 위임 도구 — 최상위(depth 0)에서만 노출해 중첩 위임을 막는다.
+const SPAWN_AGENT_SCHEMA = {
+  type: "function",
+  function: {
+    name: "spawn_agent",
+    description:
+      "독립적인 하위 작업을 서브에이전트에게 위임한다. 서브에이전트는 같은 도구(읽기/검색/수정)로 작업하고 결과 텍스트를 돌려준다. 크고 스스로 완결되는 작업 덩어리에만 사용하고, 간단한 일은 직접 도구를 호출하라.",
+    parameters: {
+      type: "object",
+      properties: {
+        task: { type: "string", description: "위임할 작업 지시(구체적으로)" },
+        context: { type: "string", description: "작업에 필요한 배경 정보(선택)" },
+      },
+      required: ["task"],
+    },
+  },
+};
+
 const RULES_FILENAMES = ["AGENT.md", "AGENTS.md", "CLAUDE.md", "rules.md", "RULES.md"];
 
 function findRules(workspace) {
@@ -79,7 +97,7 @@ function findRules(workspace) {
 }
 
 export class AgentLoop {
-  constructor({ config, client, toolbox, onEvent, approvalCallback, session = null, onToken = null }) {
+  constructor({ config, client, toolbox, onEvent, approvalCallback, session = null, onToken = null, depth = 0 }) {
     this.config = config;
     this.client = client;
     this.toolbox = toolbox;
@@ -87,6 +105,7 @@ export class AgentLoop {
     this.approvalCallback = approvalCallback;
     this.session = session;
     this.onToken = onToken; // 스트리밍 토큰 콜백(있으면 실시간 출력)
+    this.depth = depth; // 0=최상위, 1=서브에이전트(중첩 위임 불가)
     this.messages = [];
     this.usage = { input: 0, output: 0, total: 0, calls: 0 }; // 세션 누적 토큰(/status, /cost)
   }
@@ -129,6 +148,9 @@ export class AgentLoop {
       "- 기존 파일의 일부 수정은 edit_file(old_text 는 파일에서 유일해야 함), 새 파일·전체 교체만 write_file 을 쓴다.",
       "- 도구가 오류를 돌려주면 같은 호출을 반복하지 말고, 오류 메시지를 읽고 접근을 바꾼다.",
       "- 사용자가 승인을 거부하면 그 의사를 존중하고 대안을 제시한다.",
+      this.depth === 0
+        ? "- 크고 독립적으로 나눌 수 있는 작업은 spawn_agent 로 서브에이전트에 위임할 수 있다(간단한 일엔 쓰지 말 것)."
+        : "- 당신은 상위 에이전트가 위임한 하위 작업을 수행하는 서브에이전트다. 주어진 작업만 완수하고, 결과를 명확한 텍스트로 보고하라.",
       pluginNames ? `- 추가 도구: ${pluginNames}` : null,
       "",
       "# 응답 스타일",
@@ -173,6 +195,7 @@ export class AgentLoop {
     );
 
     const tools = toolSchemas(this.config.allow_shell, this.toolbox.plugins);
+    if (this.depth === 0) tools.push(SPAWN_AGENT_SCHEMA); // 서브에이전트는 재위임 불가
     const toolNames = tools.map((t) => t.function.name);
     let finalText = "";
 
@@ -209,11 +232,11 @@ export class AgentLoop {
 
       // ③ 모델의 원본 판단 + 실측 메타(응답시간/토큰/요청크기)를 드러낸다.
       // streamed=true 면 텍스트는 이미 실시간 출력됨 → UI 는 메타만 덧붙인다.
+      this.usage.calls += 1; // 모든 LLM 호출 횟수(usage 미제공 provider 포함)
       if (reply.usage) {
         this.usage.input += reply.usage.input || 0;
         this.usage.output += reply.usage.output || 0;
         this.usage.total += reply.usage.total || 0;
-        this.usage.calls += 1;
       }
 
       this._emit(Step.MODEL_REPLY, "모델 응답", reply.content || "(텍스트 없음)", {
@@ -263,7 +286,46 @@ export class AgentLoop {
     return finalText;
   }
 
+  // 서브에이전트: 하위 AgentLoop 를 만들어 위임 작업을 수행시키고 결과 텍스트를 회수한다.
+  async _runSubAgent(tc) {
+    const task = (tc.args.task || "").trim();
+    if (!task) return "spawn_agent 오류: task 가 비어 있습니다.";
+    if (this.depth > 0) return "spawn_agent 오류: 서브에이전트는 다시 위임할 수 없습니다.";
+    this._emit(Step.TOOL_RUN, "도구 실행: 서브에이전트 위임", task.slice(0, 300));
+
+    const child = new AgentLoop({
+      config: this.config,
+      client: this.client,
+      toolbox: this.toolbox, // 같은 sandbox·같은 승인 정책 공유
+      session: this.session,
+      approvalCallback: this.approvalCallback,
+      onToken: null, // 하위 스트리밍은 화면 소음 — 패널로만 표시
+      onEvent: (ev) =>
+        this.onEvent({ ...ev, title: `┆ ${ev.title}`, data: { ...(ev.data || {}), sub: 1 } }),
+      depth: this.depth + 1,
+    });
+    child.reset();
+    const prompt = (tc.args.context ? `[배경]\n${tc.args.context}\n\n` : "") + `[위임된 작업]\n${task}`;
+
+    let result = "";
+    try {
+      result = await child.run(prompt);
+    } catch (e) {
+      result = `서브에이전트 실행 오류: ${e?.message || e}`;
+    }
+    // 하위 토큰 사용량을 상위(/status)에 합산
+    this.usage.input += child.usage.input;
+    this.usage.output += child.usage.output;
+    this.usage.total += child.usage.total;
+    this.usage.calls += child.usage.calls;
+
+    const out = (result || "").trim() || "(서브에이전트가 결과 텍스트를 반환하지 않았습니다)";
+    this._emit(Step.TOOL_RESULT, "결과 반영: 서브에이전트", out.slice(0, 4000));
+    return out;
+  }
+
   async _handleToolCall(tc) {
+    if (tc.name === "spawn_agent") return this._runSubAgent(tc);
     const label = this.toolbox.label ? this.toolbox.label(tc.name) : TOOL_LABELS[tc.name] || tc.name;
     const needsApproval = this.toolbox.isMutating(tc.name);
 

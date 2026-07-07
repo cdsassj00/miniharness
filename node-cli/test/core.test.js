@@ -310,6 +310,46 @@ test("renderMarkdown: 제목/굵게/코드/목록/펜스 마커 처리", async (
   assert.ok(lines.includes("끝"));
 });
 
+test("서브에이전트: spawn_agent 위임→결과 회수, 중첩 방지, usage 합산", async () => {
+  const ws = tmpWs();
+  const toolsSeen = [];
+  // 스크립트된 가짜 LLM: 1) 부모가 위임 2) 자식이 결과 3) 부모가 최종 보고
+  const fakeClient = {
+    chat: async (messages, tools) => {
+      toolsSeen.push(tools.map((t) => t.function.name));
+      const n = toolsSeen.length;
+      if (n === 1)
+        return { content: "하위에 위임합니다", toolCalls: [{ id: "s1", name: "spawn_agent", args: { task: "메모 요약", context: "배경정보" } }], usage: { input: 10, output: 5, total: 15 }, latencyMs: 1, request: {} };
+      if (n === 2) {
+        // 자식 프롬프트에 배경+위임 라벨이 들어갔는지 확인
+        const u = messages.find((m) => m.role === "user");
+        assert.match(u.content, /\[배경\]/);
+        assert.match(u.content, /\[위임된 작업\]/);
+        return { content: "하위 작업 결과: 요약본", toolCalls: [], usage: { input: 7, output: 3, total: 10 }, latencyMs: 1, request: {} };
+      }
+      return { content: "최종 보고", toolCalls: [], usage: null, latencyMs: 1, request: {} };
+    },
+  };
+  const events = [];
+  const loop = new AgentLoop({
+    config: new Config({ provider: "mock", workspace: ws, max_steps: 5 }),
+    client: fakeClient,
+    toolbox: new Toolbox(ws),
+    onEvent: (e) => events.push(e),
+    approvalCallback: async () => ({ approved: true }),
+  });
+  const finalText = await loop.run("큰 일 시켜줘");
+
+  assert.strictEqual(finalText, "최종 보고");
+  assert.ok(toolsSeen[0].includes("spawn_agent"), "최상위엔 spawn_agent 노출");
+  assert.ok(!toolsSeen[1].includes("spawn_agent"), "서브에이전트엔 미노출(중첩 방지)");
+  const toolMsg = loop.messages.find((m) => m.role === "tool");
+  assert.match(toolMsg.content, /요약본/, "자식 결과가 부모 tool 메시지로");
+  assert.ok(events.some((e) => e.data && e.data.sub), "자식 이벤트에 sub 마커");
+  assert.strictEqual(loop.usage.input, 17, "usage 합산(부모10+자식7)");
+  assert.strictEqual(loop.usage.calls, 3);
+});
+
 test("거부하면 파일은 그대로다", async () => {
   const ws = tmpWs();
   const original = "건드리면 안 됨\n";

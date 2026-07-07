@@ -91,7 +91,10 @@ export class Config {
 
   toJSON() {
     const out = {};
-    for (const key of Object.keys(DEFAULTS)) out[key] = this[key];
+    for (const key of Object.keys(DEFAULTS)) {
+      if (key === "workspace") continue; // 실행 폴더가 곧 워크스페이스 — 저장하지 않는다
+      out[key] = this[key];
+    }
     return out;
   }
 }
@@ -100,7 +103,10 @@ export function loadConfig() {
   const p = configPath();
   try {
     if (fs.existsSync(p)) {
-      return new Config(JSON.parse(fs.readFileSync(p, "utf8")));
+      const data = JSON.parse(fs.readFileSync(p, "utf8"));
+      // workspace 는 '실행한 폴더'가 진리 — 파일에 저장된 값(옛 버전 잔재)은 무시한다.
+      delete data.workspace;
+      return new Config(data);
     }
   } catch {
     // 손상된 설정은 무시하고 기본값

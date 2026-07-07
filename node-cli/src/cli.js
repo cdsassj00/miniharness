@@ -846,31 +846,7 @@ export async function main(argv = []) {
   // 첫 실행 온보딩(한 번만 — ~/.cdsa_harness/.welcomed 표시): 작업 폴더 설정 + 튜토리얼
   const markerPath = path.join(configDir(), ".welcomed");
   if (stdin.isTTY && !fs.existsSync(markerPath)) {
-    console.log(panel(
-      [
-        "AI 가 파일을 다룰 ‘작업 폴더’를 정하세요.",
-        c.dim("이 폴더 밖은 절대 건드리지 않아요(안전장치)."),
-        "",
-        `  ${c.bold("엔터")}  ${c.cyan("지금 이 폴더")} 를 그대로 사용 (터미널답게, 기본)`,
-        `  ${c.bold("경로")}  따로 격리하고 싶으면 입력 — 예) ${c.cyan("./sandbox")} 또는 ${c.cyan("C:\\작업\\프로젝트")}`,
-      ],
-      { title: "📁 작업 폴더 설정 (처음 한 번)", color: "cyan" }
-    ));
-    const wsAns = await ask(c.cyan("작업 폴더 [엔터=기본]: "));
-    if (wsAns !== null && wsAns.trim()) {
-      cfg.workspace = wsAns.trim();
-      const rebuilt = await buildExtensions(cfg, mcp);
-      toolbox = rebuilt.toolbox;
-      skills = rebuilt.skills;
-      loop.toolbox = toolbox;
-      loop.reset();
-    }
-    try {
-      saveConfig(cfg);
-    } catch {
-      /* 저장 실패 무시 */
-    }
-    console.log(c.green(`작업 폴더: ${cfg.workspacePath()}`) + c.dim("  (나중에 /workspace 로 변경 가능)\n"));
+    console.log(c.dim(`작업 폴더 = 지금 이 폴더 (${cfg.workspacePath()}) — 바꾸려면 /workspace <경로>\n`));
 
     const a = await ask(c.cyan("짧은 튜토리얼을 볼까요? [Y/n] "));
     if (a !== null && ["", "y", "yes"].includes(a.trim().toLowerCase())) await runTutorial(ask);
@@ -882,8 +858,16 @@ export async function main(argv = []) {
     }
   }
 
+  let pendingInput = null; // 메뉴에서 고른 명령을 다음 루프에서 입력처럼 실행
   while (true) {
-    const raw = await ask(c.bold(c.cyan("› ")));
+    let raw;
+    if (pendingInput !== null) {
+      raw = pendingInput;
+      pendingInput = null;
+      console.log(c.bold(c.cyan("› ")) + raw);
+    } else {
+      raw = await ask(c.bold(c.cyan("› ")));
+    }
     if (raw === null) break; // Ctrl+D / Ctrl+C / 스트림 종료
     const user = raw.trim();
     if (!user) continue;
@@ -891,7 +875,27 @@ export async function main(argv = []) {
 
     if (["/quit", "/exit", "quit", "exit", ":q"].includes(low)) break;
     if (user === "/") {
+      // ↑↓ 메뉴로 명령 선택 → 바로 실행 (Tab 몰라도 됨)
+      const CMD_DESC = {
+        "/new": "새 대화", "/compact": "대화를 모델이 요약·압축", "/resume": "지난 대화 이어가기",
+        "/undo": "마지막 파일 변경 되돌리기", "/context": "모델에 보내는 컨텍스트 보기",
+        "/init": "모델이 AGENT.md 규칙 생성", "/memory": "규칙 파일 보기", "/workspace": "작업 폴더 보기/변경",
+        "/setup": "AI 연결 마법사", "/models": "모델 목록에서 선택", "/auto": "자동 수락 토글",
+        "/status": "상태·누적 토큰", "/update": "최신 버전으로 업데이트", "/teach": "교육 모드 토글",
+        "/stream": "스트리밍 토글", "/skills": "스킬 목록", "/plugins": "플러그인 목록", "/mcp": "MCP 서버",
+        "/guide": "빠른 시작 안내", "/tutorial": "튜토리얼", "/help": "전체 도움말", "/about": "정보", "/quit": "종료",
+      };
       const skillNames = Object.keys(skills).sort();
+      const menuItems = [
+        ...Object.entries(CMD_DESC).map(([k, v]) => `${k}  ${v}`),
+        ...skillNames.map((s) => `/${s}  ${(skills[s].description || "").slice(0, 34)}`),
+      ];
+      const sel = await selectMenu(menuItems, { title: "⌨️  명령 선택 — ↑↓ 이동 · Enter 실행" , window: 14 });
+      if (sel !== undefined) {
+        if (sel) pendingInput = sel.split(/\s{2,}/)[0];
+        continue;
+      }
+      // (비TTY 폴백) 텍스트 팔레트
       console.log(panel([
         c.bold("대화")+"      "+c.cyan("/new /compact /resume /undo /context"),
         c.bold("프로젝트")+"  "+c.cyan("/init /memory /workspace"),
@@ -1196,12 +1200,17 @@ export async function main(argv = []) {
         await runTurn(renderSkill(skills[name], argStr));
       } else {
         const { BUILTIN_COMMANDS } = await import("./completion.js");
-        const all = [...BUILTIN_COMMANDS, ...Object.keys(skills).map((s) => "/" + s)];
-        const near = all.filter((n) => n.includes(name.slice(0, 3)) || n.slice(1).startsWith(name[0] || "")).slice(0, 4);
+        const all = [...new Set([...BUILTIN_COMMANDS, ...Object.keys(skills).map((s) => "/" + s)])].sort();
+        const near = all.filter((n) => n.slice(1).startsWith(name) || n.includes(name.slice(0, 3)));
+        if (near.length) {
+          const sel = await selectMenu(near.slice(0, 20), { title: `'/${name}' — 이 중에 찾으시나요? (↑↓·Enter)` });
+          if (sel) { pendingInput = sel; continue; }
+          if (sel === null) continue; // 취소
+        }
         console.log(
           c.yellow(`알 수 없는 명령: /${name}`) +
-            (near.length ? c.dim("  혹시? ") + c.cyan(near.join(" ")) : "") +
-            c.dim("  · '/' 입력=팔레트 · Tab=자동완성")
+            (near.length ? c.dim("  혹시? ") + c.cyan(near.slice(0, 4).join(" ")) : "") +
+            c.dim("  · '/' 입력=명령 메뉴")
         );
       }
       continue;

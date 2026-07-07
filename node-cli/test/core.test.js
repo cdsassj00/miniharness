@@ -398,6 +398,25 @@ test("selectMenu: 비TTY 에선 undefined(폴백 신호)", async () => {
   assert.strictEqual(r, undefined);
 });
 
+test("workspace 는 저장되지 않고, 파일의 옛 값은 무시된다(실행 폴더=워크스페이스)", async () => {
+  const { loadConfig } = await import("../src/config.js");
+  // 저장 시 workspace 키 제외
+  const cfg = new Config({ provider: "mock", workspace: "/어딘가" });
+  assert.ok(!("workspace" in cfg.toJSON()), "toJSON 에 workspace 없음");
+  // 파일에 옛 값이 있어도 무시 → 현재 폴더
+  const dir = tmpWs();
+  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ provider: "mock", workspace: "C:/옛날/경로" }), "utf8");
+  const oldCwd = process.cwd();
+  try {
+    process.chdir(dir);
+    const loaded = loadConfig();
+    assert.strictEqual(loaded.workspace, ".", "저장된 workspace 무시");
+    assert.strictEqual(loaded.workspacePath(), fs.realpathSync(dir), "실행 폴더가 워크스페이스");
+  } finally {
+    process.chdir(oldCwd);
+  }
+});
+
 test("거부하면 파일은 그대로다", async () => {
   const ws = tmpWs();
   const original = "건드리면 안 됨\n";

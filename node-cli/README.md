@@ -231,7 +231,6 @@ cdsa-harness
   "provider": "openai",
   "api_key": "",
   "model": "gpt-4o-mini",
-  "workspace": ".",
   "approval_mode": "manual",
   "allow_shell": false,
   "max_steps": 8,

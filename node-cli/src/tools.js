@@ -86,7 +86,7 @@ export class Toolbox {
     const root = this.workspace + path.sep;
     if (candidate !== this.workspace && !candidate.startsWith(root)) {
       throw new ToolError(
-        `작업 폴더 밖 경로에는 접근할 수 없습니다: ${rel} (허용 루트: ${this.workspace})`
+        `작업 폴더 밖 경로입니다: ${rel} — 현재 작업 폴더는 ${this.workspace} 입니다. 다른 폴더에서 작업하려면 사용자가 /workspace <경로> 로 변경할 수 있다고 안내하세요.`
       );
     }
     return candidate;

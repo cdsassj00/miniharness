@@ -34,7 +34,7 @@ const DEFAULTS = {
   api_key: "",
   base_url: "", // OpenAI 호환 사내/폐쇄망 LLM 의 전체 엔드포인트 직접 지정(있으면 우선)
   model: "mock-agent",
-  workspace: "./workspace",
+  workspace: ".", // 기본 = 현재 폴더(cwd). Claude Code/OpenCode 와 동일 — 별도 폴더를 만들지 않는다.
   approval_mode: "manual",
   allow_shell: false,
   max_steps: 8,
@@ -70,7 +70,7 @@ export class Config {
 
   // CLI 도구이므로 작업 폴더 상대경로는 '현재 폴더' 기준으로 해석한다(직관적).
   workspacePath() {
-    let p = this.workspace || "./workspace";
+    let p = this.workspace || ".";
     if (!path.isAbsolute(p)) p = path.resolve(process.cwd(), p);
     return p;
   }

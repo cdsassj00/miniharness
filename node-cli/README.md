@@ -84,7 +84,7 @@ Claude Code·OpenCode 컨벤션을 따릅니다.
 | `/status` (=`/cost`) | 상태 · 세션 누적 토큰 |
 | `/models [검색어]` | **실시간 모델 목록에서 번호로 선택**(4개 제공자 모두) |
 | `/guide` · `/tutorial` | 빠른 시작 안내 · 단계별 인터랙티브 튜토리얼 |
-| `/workspace <폴더>` | 작업 폴더 보기/변경 (`.` = 현재 폴더) |
+| `/workspace <폴더>` | 작업 폴더 보기/변경 — **기본은 현재 폴더(cwd)**, 터미널답게 |
 | `/color` | 색상 켜기/끄기(흑백) |
 | `/setup` | 제공자·API 키·모델 대화형 연결 |
 | `/provider <이름>` | openai · anthropic · openrouter · mock 전환 |
@@ -231,7 +231,7 @@ cdsa-harness
   "provider": "openai",
   "api_key": "",
   "model": "gpt-4o-mini",
-  "workspace": "./workspace",
+  "workspace": ".",
   "approval_mode": "manual",
   "allow_shell": false,
   "max_steps": 8,

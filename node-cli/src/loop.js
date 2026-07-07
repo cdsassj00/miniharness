@@ -99,38 +99,58 @@ export class AgentLoop {
   _systemPrompt() {
     const ws = this.toolbox.workspace;
     const { name: rulesName, text: rulesText } = findRules(ws);
-    let listing;
+    // 폴더 '전체 목록'을 박아넣지 않는다(낡은 정보·토큰 낭비 방지) — 최상위 이름만 참고로 주고
+    // 최신 상태는 도구(list_dir/search_files)로 확인하게 한다. (OpenCode/Claude Code 방식)
+    let topLevel = "";
     try {
-      listing = this.toolbox.listDir(".").output;
+      const names = fs.readdirSync(ws).filter((n) => !n.startsWith(".")).sort();
+      topLevel = names.slice(0, 15).join(", ") + (names.length > 15 ? ` … (총 ${names.length}개)` : "");
     } catch {
-      listing = "(폴더를 읽을 수 없음)";
+      topLevel = "(읽을 수 없음)";
     }
-    const toolNames = ["list_dir", "read_file", "search_files", "write_file", "edit_file"].concat(
-      this.config.allow_shell ? ["run_shell"] : []
-    );
-    const pluginNames = (this.toolbox.plugins || []).map((p) => p.name);
-    const toolsDesc = toolNames
-      .map((n) => `${n}(${TOOL_LABELS[n]})`)
-      .concat(pluginNames)
-      .join(", ");
+    const pluginNames = (this.toolbox.plugins || []).map((p) => p.name).join(", ");
+    const now = new Date();
+    const day = ["일", "월", "화", "수", "목", "금", "토"][now.getDay()];
 
     const parts = [
-      "당신은 'CDSA Harness' 안에서 동작하는 소형 코딩 에이전트입니다.",
-      "당신은 직접 파일을 만질 수 없습니다. 반드시 제공된 도구로만 작업 폴더를 다룹니다.",
-      `사용 가능한 도구: ${toolsDesc}.`,
-      "기존 파일의 일부만 고칠 땐 edit_file(old_text→new_text), 새 파일/전체 교체는 write_file 을 쓰세요.",
-      "무엇이 어디 있는지 모르면 search_files 로 찾고, 추측하지 말고 read_file/list_dir 로 사실을 확인하세요.",
-      "작업이 끝나면 도구를 더 호출하지 말고 한국어로 결과를 요약하세요.",
-      `\n[작업 폴더 루트]\n${ws}`,
-      `\n[현재 폴더 내용]\n${listing}`,
-    ];
-    if (rulesText) parts.push(`\n[규칙 파일 ${rulesName}]\n${rulesText.trim()}`);
+      "# 정체성",
+      "당신은 CDSA Harness(made by CDSA) 안에서 동작하는 코딩·업무 에이전트입니다.",
+      "파일시스템에 직접 접근할 수 없으며, 제공된 도구 호출로만 작업 폴더를 다룹니다.",
+      "",
+      "# 환경",
+      `- 작업 폴더(루트): ${ws}`,
+      `- 최상위 항목(참고용 스냅샷): ${topLevel || "(빈 폴더)"}`,
+      `- 플랫폼: ${process.platform} · Node ${process.versions.node} · 오늘: ${now.toISOString().slice(0, 10)}(${day})`,
+      "- 모든 도구는 작업 폴더 밖으로 나갈 수 없습니다(sandbox). 파일 수정·셸 실행은 사용자 승인 후에만 적용됩니다.",
+      "",
+      "# 도구 사용 원칙",
+      "- 추측 금지: 파일 위치·내용이 불확실하면 먼저 search_files / list_dir / read_file 로 사실을 확인한다.",
+      "- 기존 파일의 일부 수정은 edit_file(old_text 는 파일에서 유일해야 함), 새 파일·전체 교체만 write_file 을 쓴다.",
+      "- 도구가 오류를 돌려주면 같은 호출을 반복하지 말고, 오류 메시지를 읽고 접근을 바꾼다.",
+      "- 사용자가 승인을 거부하면 그 의사를 존중하고 대안을 제시한다.",
+      pluginNames ? `- 추가 도구: ${pluginNames}` : null,
+      "",
+      "# 응답 스타일",
+      "- 한국어로, 간결하게. 불필요한 서론·사과 없이 핵심부터.",
+      "- 작업이 끝나면 도구를 더 호출하지 말고 무엇을 했는지 요약한다.",
+    ].filter((p) => p !== null);
+    if (rulesText) parts.push("", `# 프로젝트 규칙 (${rulesName})`, rulesText.trim());
     return parts.join("\n");
   }
 
   reset() {
     this.systemPromptText = this._systemPrompt();
     this.messages = [{ role: "system", content: this.systemPromptText }];
+  }
+
+  // 매 턴 시작 시 시스템 프롬프트를 신선하게 재구성한다(대화는 유지, 환경·스냅샷만 갱신).
+  refreshSystemPrompt() {
+    this.systemPromptText = this._systemPrompt();
+    if (this.messages.length && this.messages[0].role === "system") {
+      this.messages[0] = { role: "system", content: this.systemPromptText };
+    } else {
+      this.messages.unshift({ role: "system", content: this.systemPromptText });
+    }
   }
 
   // /context 명령용: 현재 대화 컨텍스트 요약.
@@ -140,6 +160,7 @@ export class AgentLoop {
 
   async run(userInput) {
     if (this.messages.length === 0) this.reset();
+    else this.refreshSystemPrompt(); // 환경·규칙·스냅샷을 매 턴 최신으로 (대화 이력은 유지)
 
     this._emit(Step.USER_INPUT, "사용자 입력", userInput);
     this.messages.push({ role: "user", content: userInput });
@@ -147,7 +168,7 @@ export class AgentLoop {
     this._emit(
       Step.BUILD_CONTEXT,
       "컨텍스트 구성",
-      "규칙 파일 + 작업 폴더 내용을 시스템 프롬프트로 묶어 모델에 전달합니다."
+      "정체성·환경·도구원칙·프로젝트규칙(AGENT.md)을 시스템 프롬프트로 묶어 매 턴 신선하게 전달합니다."
     );
 
     const tools = toolSchemas(this.config.allow_shell, this.toolbox.plugins);

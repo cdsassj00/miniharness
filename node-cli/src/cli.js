@@ -549,6 +549,12 @@ async function runSetup(ask, cfg) {
     return false;
   }
   cfg.provider = provider;
+  // ollama 설정이 남긴 base_url 잔재는 다른 provider 의 요청까지 그 주소로 보내버린다.
+  // provider 를 새로 고르면 지운다(ollama 는 아래에서 다시 채워진다).
+  if (provider !== "ollama" && cfg.base_url) {
+    console.log(c.dim(`(이전 설정의 base_url(${cfg.base_url}) 을 지웠어요 — ${provider} 공식 엔드포인트를 사용합니다)`));
+    cfg.base_url = "";
+  }
 
   if (provider === "mock") {
     cfg.model = "mock-agent";
@@ -1263,6 +1269,10 @@ export async function main(argv = []) {
       const p = user.split(/\s+/)[1];
       if (!PROVIDERS.includes(p)) { console.log(c.yellow(`provider 는 ${PROVIDERS.join("/")} 중 하나.`)); continue; }
       cfg.provider = p;
+      if (p !== "ollama" && cfg.base_url) {
+        console.log(c.dim(`(이전 설정의 base_url(${cfg.base_url}) 을 지웠어요 — ${p} 공식 엔드포인트를 사용합니다)`));
+        cfg.base_url = "";
+      }
       if (SUGGESTED_MODELS[p]?.length) cfg.model = SUGGESTED_MODELS[p][0];
       loop.client = makeClient(cfg);
       loop.reset();

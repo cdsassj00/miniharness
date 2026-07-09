@@ -57,7 +57,7 @@ export class LLMClient {
       res = await fetch(url, { method: "POST", headers, body: json, signal: ctrl.signal });
     } catch (e) {
       clearTimeout(timer);
-      throw new LLMError(this._netErrorMessage(e));
+      throw new LLMError(this._netErrorMessage(e, url));
     }
     if (!res.ok) {
       clearTimeout(timer);
@@ -67,8 +67,8 @@ export class LLMClient {
     return { res, started, timer, bodyBytes: Buffer.byteLength(json, "utf8") };
   }
 
-  _netErrorMessage(e) {
-    return describeNetError(e, this.provider, this.timeout);
+  _netErrorMessage(e, url = "") {
+    return describeNetError(e, this.provider, this.timeout, url);
   }
 
   async _post(url, headers, body) {
@@ -80,7 +80,7 @@ export class LLMClient {
     try {
       res = await fetch(url, { method: "POST", headers, body: json, signal: ctrl.signal });
     } catch (e) {
-      throw new LLMError(this._netErrorMessage(e));
+      throw new LLMError(this._netErrorMessage(e, url));
     } finally {
       clearTimeout(timer);
     }
@@ -231,7 +231,7 @@ export class LLMClient {
 // Node 내장 fetch(undici)는 실패하면 겉면 메시지가 "fetch failed" 하나뿐이고,
 // 진짜 원인(DNS 실패·프록시·인증서 등)은 e.cause 체인 안에 숨어 있다.
 // 여기서 원인을 끝까지 파고들어 사용자에게 코드와 해결 힌트까지 보여준다.
-export function describeNetError(e, provider = "", timeout = 0) {
+export function describeNetError(e, provider = "", timeout = 0, url = "") {
   // 자체 타임아웃(AbortController)에 걸린 경우: fetch 는 AbortError 를 던진다.
   if (e?.name === "AbortError" || e?.name === "TimeoutError") {
     return `네트워크 오류: 응답 시간 초과(${timeout}ms). 네트워크가 느리거나 요청이 너무 클 수 있어요.`;
@@ -257,6 +257,19 @@ export function describeNetError(e, provider = "", timeout = 0) {
   else if (codes.length) msg += `\n  ↳ 원인 코드: ${codes.join(", ")}`;
 
   const has = (...cs) => cs.some((c) => codes.includes(c));
+
+  // provider 는 클라우드(anthropic 등)인데 요청이 로컬 주소로 가는 경우:
+  // 이전에 ollama 설정 등이 남긴 config.json 의 base_url 잔재가 원인이다.
+  // 이때 방화벽/프록시 힌트는 오답이므로 이 안내만 보여주고 끝낸다.
+  const localUrl = /^https?:\/\/(localhost|127\.0\.0\.1|\[?::1\]?)([:/]|$)/i.test(url);
+  if (localUrl && provider && provider !== "ollama") {
+    msg +=
+      `\n  ↳ provider 는 '${provider}' 인데 요청이 로컬 주소(${url})로 가고 있어요. ` +
+      "설정 파일(config.json)에 이전 ollama 설정의 base_url 이 남아 있을 가능성이 큽니다.\n" +
+      "  ↳ 해결: /setup 을 다시 실행하거나, config.json 에서 \"base_url\" 값을 지우고 재시작하세요.";
+    return msg;
+  }
+
   if (has("ENOTFOUND", "EAI_AGAIN")) {
     msg += "\n  ↳ DNS 조회 실패예요. 인터넷 연결을 확인하세요. 사내망이라면 프록시 뒤일 가능성이 큽니다(아래 프록시 안내 참고).";
   }

@@ -127,6 +127,23 @@ test("describeNetError: AggregateError 안의 원인 코드도 수집한다", ()
   assert.match(msg, /방화벽|프록시/);
 });
 
+test("describeNetError: 클라우드 provider 가 로컬 주소로 요청하면 base_url 잔재를 지목한다", () => {
+  const e = new TypeError("fetch failed");
+  e.cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:11434"), { code: "ECONNREFUSED" });
+  const msg = describeNetError(e, "anthropic", 60000, "http://localhost:11434/v1/chat/completions");
+  assert.match(msg, /base_url/);
+  assert.match(msg, /\/setup/);
+  assert.doesNotMatch(msg, /방화벽/); // 이 경우 방화벽/프록시 힌트는 오답이라 생략
+});
+
+test("describeNetError: ollama provider 의 로컬 연결 실패는 base_url 잔재로 몰지 않는다", () => {
+  const e = new TypeError("fetch failed");
+  e.cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:11434"), { code: "ECONNREFUSED" });
+  const msg = describeNetError(e, "ollama", 60000, "http://localhost:11434/v1/chat/completions");
+  assert.doesNotMatch(msg, /base_url/);
+  assert.match(msg, /ollama serve/);
+});
+
 test("describeNetError: 타임아웃(AbortError)은 시간 초과로 안내", () => {
   const e = new Error("This operation was aborted");
   e.name = "AbortError";

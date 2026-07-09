@@ -68,11 +68,7 @@ export class LLMClient {
   }
 
   _netErrorMessage(e) {
-    let msg = `네트워크 오류: ${e.message}`;
-    if (this.provider === "ollama") {
-      msg += "\n  ↳ Ollama 가 실행 중인지 확인하세요: `ollama serve` (모델 설치: `ollama pull qwen2.5:7b`)";
-    }
-    return msg;
+    return describeNetError(e, this.provider, this.timeout);
   }
 
   async _post(url, headers, body) {
@@ -230,6 +226,68 @@ export class LLMClient {
       bodyBytes,
     };
   }
+}
+
+// Node 내장 fetch(undici)는 실패하면 겉면 메시지가 "fetch failed" 하나뿐이고,
+// 진짜 원인(DNS 실패·프록시·인증서 등)은 e.cause 체인 안에 숨어 있다.
+// 여기서 원인을 끝까지 파고들어 사용자에게 코드와 해결 힌트까지 보여준다.
+export function describeNetError(e, provider = "", timeout = 0) {
+  // 자체 타임아웃(AbortController)에 걸린 경우: fetch 는 AbortError 를 던진다.
+  if (e?.name === "AbortError" || e?.name === "TimeoutError") {
+    return `네트워크 오류: 응답 시간 초과(${timeout}ms). 네트워크가 느리거나 요청이 너무 클 수 있어요.`;
+  }
+
+  // cause 체인(+AggregateError.errors)을 평탄화해서 원인 오류들을 모두 수집.
+  const causes = [];
+  const seen = new Set();
+  const walk = (err) => {
+    if (!err || typeof err !== "object" || seen.has(err)) return;
+    seen.add(err);
+    causes.push(err);
+    if (Array.isArray(err.errors)) err.errors.forEach(walk);
+    walk(err.cause);
+  };
+  walk(e?.cause);
+
+  const codes = [...new Set(causes.map((c) => c.code).filter(Boolean))];
+  const detail = causes.map((c) => c.message).filter(Boolean).slice(-1)[0] || "";
+
+  let msg = `네트워크 오류: ${e?.message || e}`;
+  if (detail && detail !== e?.message) msg += `\n  ↳ 원인: ${detail}${codes.length ? ` [${codes.join(", ")}]` : ""}`;
+  else if (codes.length) msg += `\n  ↳ 원인 코드: ${codes.join(", ")}`;
+
+  const has = (...cs) => cs.some((c) => codes.includes(c));
+  if (has("ENOTFOUND", "EAI_AGAIN")) {
+    msg += "\n  ↳ DNS 조회 실패예요. 인터넷 연결을 확인하세요. 사내망이라면 프록시 뒤일 가능성이 큽니다(아래 프록시 안내 참고).";
+  }
+  if (has("ECONNREFUSED", "ETIMEDOUT", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT")) {
+    msg += "\n  ↳ 서버까지 연결이 안 돼요. 방화벽·VPN·보안 프로그램이 막고 있거나 프록시가 필요한 환경일 수 있습니다.";
+  }
+  if (
+    has(
+      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      "SELF_SIGNED_CERT_IN_CHAIN",
+      "DEPTH_ZERO_SELF_SIGNED_CERT",
+      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      "CERT_HAS_EXPIRED",
+      "ERR_TLS_CERT_ALTNAME_INVALID",
+    )
+  ) {
+    msg +=
+      "\n  ↳ TLS 인증서 검증 실패 — 회사 보안 장비가 HTTPS 를 가로채는(SSL 인터셉트) 환경으로 보여요. " +
+      "사내 루트 CA 인증서(pem)를 받아 `NODE_EXTRA_CA_CERTS=<CA 파일 경로>` 환경변수를 설정하고 다시 실행하세요.";
+  }
+  // Node 의 fetch 는 브라우저와 달리 시스템/환경변수 프록시 설정을 기본으로 무시한다.
+  // 프록시가 원인일 수 있는 실패라면 사용법을 알려준다.
+  if (codes.length === 0 || has("ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ETIMEDOUT", "ECONNRESET", "UND_ERR_CONNECT_TIMEOUT")) {
+    msg +=
+      "\n  ↳ 프록시 환경이라면: Node 의 fetch 는 HTTPS_PROXY 설정을 기본으로 무시해요. " +
+      "`NODE_USE_ENV_PROXY=1` 과 `HTTPS_PROXY=http://<프록시주소:포트>` 환경변수를 함께 설정하고 다시 실행하세요(Node 22.18+).";
+  }
+  if (provider === "ollama") {
+    msg += "\n  ↳ Ollama 가 실행 중인지 확인하세요: `ollama serve` (모델 설치: `ollama pull qwen2.5:7b`)";
+  }
+  return msg;
 }
 
 function trim(s) {

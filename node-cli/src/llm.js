@@ -346,6 +346,15 @@ function safeParse(jsonStr) {
 
 function httpErrorMessage(status, text) {
   let msg = `API 오류 ${status}: ${trim(text)}`;
+  // 도구(tool use) 미지원 모델/엔드포인트 — 모델명 오타 힌트는 오답이므로 여기서 끝낸다.
+  if (/tool[ _]use|support tools?/i.test(text)) {
+    msg +=
+      "\n  ↳ 이 모델(또는 이 모델의 제공 엔드포인트)이 도구 호출(tool use)을 지원하지 않아요. " +
+      "에이전트 하네스는 파일 도구가 필수라 도구 지원 모델이 필요합니다." +
+      "\n  ↳ /models 로 다른 모델을 고르세요 — OpenRouter 목록은 도구 지원 모델만 표시됩니다 " +
+      "(예: anthropic/claude-sonnet-4.5, openai/gpt-4o-mini).";
+    return msg;
+  }
   if (status === 404) {
     msg += "\n  ↳ 모델 이름을 확인하세요. /model 로 변경 가능. " +
       "OpenRouter 는 'provider/model' 형식이어야 합니다 (예: openai/gpt-4o-mini, anthropic/claude-3.7-sonnet).";

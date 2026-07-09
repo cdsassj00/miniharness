@@ -204,6 +204,34 @@ test("temperature 와 무관한 400 은 재시도 없이 그대로 던진다", a
   }
 });
 
+test("도구 미지원 모델 404: 모델명 오타가 아니라 tool use 미지원으로 안내한다", async () => {
+  const origFetch = global.fetch;
+  global.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        error: {
+          message: 'No endpoints found that support tool use. Try disabling "list_dir".',
+          code: 404,
+        },
+      }),
+      { status: 404 },
+    );
+  try {
+    const client = new LLMClient({ provider: "openrouter", apiKey: "k", model: "some/free-model" });
+    await assert.rejects(
+      () => client.chat([{ role: "user", content: "안녕" }], [{ type: "function", function: { name: "list_dir", parameters: {} } }]),
+      (e) => {
+        assert.match(e.message, /도구 호출\(tool use\)을 지원하지 않아요/);
+        assert.match(e.message, /\/models/);
+        assert.doesNotMatch(e.message, /모델 이름을 확인하세요/); // 오답 힌트 생략
+        return true;
+      },
+    );
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
 test("Anthropic 변환: system 분리 + tool_use/tool_result 매핑", () => {
   const messages = [
     { role: "system", content: "규칙" },

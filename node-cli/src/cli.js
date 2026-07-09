@@ -297,7 +297,12 @@ async function fetchProviderModels(cfg, query = "") {
   try {
     if (cfg.provider === "openrouter") {
       const r = await fetchJson("https://openrouter.ai/api/v1/models");
-      let ids = (r.data || []).map((m) => m.id).sort();
+      // 하네스는 항상 도구(tools)를 함께 보내므로, 도구를 지원하지 않는 모델은 어차피
+      // "No endpoints found that support tool use" 로 실패한다 — 목록에서 미리 제외.
+      let ids = (r.data || [])
+        .filter((m) => !Array.isArray(m.supported_parameters) || m.supported_parameters.includes("tools"))
+        .map((m) => m.id)
+        .sort();
       if (q) ids = ids.filter((id) => id.toLowerCase().includes(q));
       return { list: ids, live: true };
     }

@@ -151,6 +151,59 @@ test("describeNetError: 타임아웃(AbortError)은 시간 초과로 안내", ()
   assert.match(msg, /시간 초과\(60000ms\)/);
 });
 
+test("temperature 거부(400) 시 샘플링 파라미터를 빼고 자동 재시도한다", async () => {
+  const bodies = [];
+  const origFetch = global.fetch;
+  global.fetch = async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    bodies.push(body);
+    if ("temperature" in body) {
+      return new Response(
+        JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "`temperature` is deprecated for this model." } }),
+        { status: 400 },
+      );
+    }
+    return new Response(
+      JSON.stringify({ type: "message", content: [{ type: "text", text: "안녕하세요!" }], usage: { input_tokens: 1, output_tokens: 2 } }),
+      { status: 200 },
+    );
+  };
+  try {
+    const client = new LLMClient({ provider: "anthropic", apiKey: "k", model: "claude-sonnet-5" });
+    const reply = await client.chat([{ role: "user", content: "안녕" }], []);
+    assert.strictEqual(reply.content, "안녕하세요!");
+    assert.strictEqual(bodies.length, 2);
+    assert.ok("temperature" in bodies[0]);
+    assert.ok(!("temperature" in bodies[1]));
+
+    // 같은 세션의 다음 호출은 처음부터 temperature 없이 보낸다(재시도 낭비 없음)
+    await client.chat([{ role: "user", content: "또 안녕" }], []);
+    assert.strictEqual(bodies.length, 3);
+    assert.ok(!("temperature" in bodies[2]));
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test("temperature 와 무관한 400 은 재시도 없이 그대로 던진다", async () => {
+  let calls = 0;
+  const origFetch = global.fetch;
+  global.fetch = async () => {
+    calls++;
+    return new Response(
+      JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "max_tokens: must be positive" } }),
+      { status: 400 },
+    );
+  };
+  try {
+    const client = new LLMClient({ provider: "anthropic", apiKey: "k", model: "claude-sonnet-5" });
+    await assert.rejects(() => client.chat([{ role: "user", content: "안녕" }], []), /API 오류 400/);
+    assert.strictEqual(calls, 1);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
 test("Anthropic 변환: system 분리 + tool_use/tool_result 매핑", () => {
   const messages = [
     { role: "system", content: "규칙" },

@@ -46,6 +46,18 @@ export class LLMClient {
     throw new LLMError(`지원하지 않는 provider 입니다: ${this.provider}`);
   }
 
+  // _post/_openStream 을 감싸, 샘플링 파라미터 거부(400)를 만나면 빼고 1회 재시도.
+  async _sendWithSamplingRetry(send, body) {
+    if (this._noSampling) this._stripSampling(body);
+    try {
+      return await send(body);
+    } catch (e) {
+      if (!this._shouldRetryWithoutSampling(e, body)) throw e;
+      this._stripSampling(body);
+      return await send(body);
+    }
+  }
+
   // 스트리밍용: 응답 객체(본문 스트림)를 그대로 받는다.
   async _openStream(url, headers, body) {
     const json = JSON.stringify(body);
@@ -69,6 +81,22 @@ export class LLMClient {
 
   _netErrorMessage(e, url = "") {
     return describeNetError(e, this.provider, this.timeout, url);
+  }
+
+  // 최신 Claude 모델(Sonnet 5, Opus 4.7+ 등)은 temperature/top_p/top_k 샘플링 파라미터를
+  // 거부한다(400: "`temperature` is deprecated for this model."). 모델 목록을 하드코딩하는
+  // 대신 그 400 을 감지하면 파라미터를 빼고 1회 재시도하고, 세션 동안 기억해 다시 안 보낸다.
+  _shouldRetryWithoutSampling(e, body) {
+    if (this._noSampling) return false;
+    if (!("temperature" in body || "top_p" in body || "top_k" in body)) return false;
+    return e instanceof LLMError && /API 오류 400/.test(e.message) && /temperature|top_p|top_k/.test(e.message);
+  }
+
+  _stripSampling(body) {
+    this._noSampling = true;
+    delete body.temperature;
+    delete body.top_p;
+    delete body.top_k;
   }
 
   async _post(url, headers, body) {
@@ -108,7 +136,7 @@ export class LLMClient {
       headers["HTTP-Referer"] = "https://github.com/cdsassj00/miniharness";
       headers["X-Title"] = "CDSA Harness";
     }
-    const { payload, latencyMs, bodyBytes } = await this._post(url, headers, body);
+    const { payload, latencyMs, bodyBytes } = await this._sendWithSamplingRetry((b) => this._post(url, headers, b), body);
     const parsed = parseOpenAiReply(payload);
     return {
       ...parsed,
@@ -126,7 +154,7 @@ export class LLMClient {
       "anthropic-version": "2023-06-01",
       "Content-Type": "application/json",
     };
-    const { payload, latencyMs, bodyBytes } = await this._post(url, headers, body);
+    const { payload, latencyMs, bodyBytes } = await this._sendWithSamplingRetry((b) => this._post(url, headers, b), body);
     const parsed = parseAnthropicReply(payload);
     return {
       ...parsed,
@@ -148,7 +176,7 @@ export class LLMClient {
       headers["HTTP-Referer"] = "https://github.com/cdsassj00/miniharness";
       headers["X-Title"] = "CDSA Harness";
     }
-    const { res, started, timer, bodyBytes } = await this._openStream(url, headers, body);
+    const { res, started, timer, bodyBytes } = await this._sendWithSamplingRetry((b) => this._openStream(url, headers, b), body);
     let content = "";
     const tcMap = new Map(); // index -> {id,name,args}
     let usage = null;
@@ -183,7 +211,7 @@ export class LLMClient {
     const body = toAnthropicBody(messages, tools, this.model, this.temperature, this.maxTokens);
     body.stream = true;
     const headers = { "x-api-key": this.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" };
-    const { res, started, timer, bodyBytes } = await this._openStream(url, headers, body);
+    const { res, started, timer, bodyBytes } = await this._sendWithSamplingRetry((b) => this._openStream(url, headers, b), body);
     let content = "";
     const blocks = new Map(); // index -> {type,name,id,json}
     let usage = { input: null, output: null, total: 0 };

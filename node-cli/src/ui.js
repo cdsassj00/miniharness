@@ -25,6 +25,7 @@ export const c = {
   magenta: wrap(35, 39),
   cyan: wrap(36, 39),
   grey: wrap(90, 39),
+  white: wrap(97, 39), // 밝은 흰색 — 교육모드에서 '실제 값'을 또렷하게
 };
 
 // 24bit truecolor (그라데이션 배너용). hex "#rrggbb"

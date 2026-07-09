@@ -81,14 +81,27 @@ function printTeach(ev, stream) {
       return;
 
     case Step.MODEL_CALL: {
+      // 실제 값은 흰색, 초보자용 설명(←)은 노란색으로 구분해 가독성을 높인다.
+      const why = (t) => c.yellow(`← ${t}`);
+      const ROLE_DESC = {
+        system: "하네스가 자동으로 넣는 규칙·정체성·작업폴더 안내문",
+        user: "내가 입력한 메시지",
+        assistant: "모델(AI)이 이전에 한 답변",
+        tool: "도구 실행 결과 — 모델에게 되돌려주는 값",
+      };
       const lines = [];
-      lines.push(`${c.grey("provider/model")}  ${c.bold(`${d.provider} · ${d.model}`)}`);
-      lines.push(c.grey(`모델에 보내는 메시지 ${d.messages?.length || 0}개 · 추정 ${d.estTokens} 토큰 · ${d.totalChars}자`));
+      lines.push(`${c.grey("provider/model")}  ${c.white(c.bold(`${d.provider} · ${d.model}`))}  ${why("어느 회사의 어떤 모델을 호출하는지")}`);
+      lines.push(`${c.white(`모델에 보내는 메시지 ${d.messages?.length || 0}개 · 추정 ${d.estTokens} 토큰 · ${d.totalChars}자`)}`);
+      lines.push(`  ${why("모델은 기억이 없어서, 지금까지의 대화 전체를 매번 처음부터 다시 보냅니다")}`);
       for (const m of d.messages || []) {
         const roleColor = m.role === "system" ? c.magenta : m.role === "user" ? c.cyan : m.role === "assistant" ? c.green : c.yellow;
-        lines.push(`  ${roleColor(m.role.padEnd(9))} ${c.grey(`${m.chars}자${m.extra || ""}`)}`);
+        const desc = ROLE_DESC[m.role]
+          ? `  ${why(ROLE_DESC[m.role] + (m.extra && m.role === "assistant" ? " (도구를 써달라는 요청 포함)" : ""))}`
+          : "";
+        lines.push(`  ${roleColor(m.role.padEnd(9))} ${c.white(`${m.chars}자${m.extra || ""}`)}${desc}`);
       }
-      lines.push(c.grey(`제공 도구(${d.tools?.length || 0}): ${(d.tools || []).join(", ")}`));
+      lines.push(`${c.white(`제공 도구(${d.tools?.length || 0})`)}${c.grey(`: ${(d.tools || []).join(", ")}`)}`);
+      lines.push(`  ${why("모델이 쓸 수 있는 '손'(함수) 목록 — 모델이 이름과 인자로 요청하면 하네스가 대신 실행")}`);
       console.log(panel(lines, { title: `${d.sub ? "┆ " : ""}🧠 ② LLM 호출 — 반복 ${d.iteration}`, color: "magenta" }));
       if (d.systemPrompt && !d.sub) {
         console.log(panel(clip(d.systemPrompt, 600).split("\n"), {

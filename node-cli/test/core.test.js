@@ -31,7 +31,7 @@ function buildStoredZip(files) {
 }
 
 import { Config } from "../src/config.js";
-import { LLMClient, toAnthropicBody } from "../src/llm.js";
+import { LLMClient, describeNetError, toAnthropicBody } from "../src/llm.js";
 import { AgentLoop, Step } from "../src/loop.js";
 import { scanNodeModules } from "../src/plugins.js";
 import { loadSkills, renderSkill } from "../src/skills.js";
@@ -94,6 +94,44 @@ test("스트리밍: onToken 으로 받은 조각의 합 = 최종 content", async
   const reply = await client.chat([{ role: "user", content: "안녕" }], [], (ch) => { acc += ch; });
   assert.strictEqual(acc, reply.content);
   assert.ok(acc.length > 0);
+});
+
+test("describeNetError: fetch failed 의 숨은 cause(DNS 실패)를 드러낸다", () => {
+  const e = new TypeError("fetch failed");
+  e.cause = Object.assign(new Error("getaddrinfo ENOTFOUND api.anthropic.com"), { code: "ENOTFOUND" });
+  const msg = describeNetError(e, "anthropic", 60000);
+  assert.match(msg, /getaddrinfo ENOTFOUND api\.anthropic\.com/);
+  assert.match(msg, /ENOTFOUND/);
+  assert.match(msg, /DNS/);
+  assert.match(msg, /NODE_USE_ENV_PROXY/); // 프록시 환경 안내 포함
+});
+
+test("describeNetError: TLS 인증서 오류엔 NODE_EXTRA_CA_CERTS 안내", () => {
+  const e = new TypeError("fetch failed");
+  e.cause = Object.assign(new Error("self-signed certificate in certificate chain"), {
+    code: "SELF_SIGNED_CERT_IN_CHAIN",
+  });
+  const msg = describeNetError(e, "anthropic", 60000);
+  assert.match(msg, /NODE_EXTRA_CA_CERTS/);
+});
+
+test("describeNetError: AggregateError 안의 원인 코드도 수집한다", () => {
+  const agg = new AggregateError(
+    [Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), { code: "ECONNREFUSED" })],
+    "",
+  );
+  const e = new TypeError("fetch failed");
+  e.cause = agg;
+  const msg = describeNetError(e, "anthropic", 60000);
+  assert.match(msg, /ECONNREFUSED/);
+  assert.match(msg, /방화벽|프록시/);
+});
+
+test("describeNetError: 타임아웃(AbortError)은 시간 초과로 안내", () => {
+  const e = new Error("This operation was aborted");
+  e.name = "AbortError";
+  const msg = describeNetError(e, "anthropic", 60000);
+  assert.match(msg, /시간 초과\(60000ms\)/);
 });
 
 test("Anthropic 변환: system 분리 + tool_use/tool_result 매핑", () => {

@@ -4,6 +4,8 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { describeNetError } from "./llm.js";
+
 export const TOOL_LABELS = {
   list_dir: "폴더 보기",
   read_file: "파일 읽기",
@@ -14,6 +16,8 @@ export const TOOL_LABELS = {
   glob: "패턴 파일찾기",
   grep: "정규식 검색",
   webfetch: "웹 읽기",
+  websearch: "웹 검색",
+  lsp_diagnostics: "코드 진단",
   run_shell: "셸 실행",
   spawn_agent: "서브에이전트",
   todo_write: "할일 기록",
@@ -395,7 +399,7 @@ export class Toolbox {
     return { ok: true, output: hits.join("\n") || `/${pattern}/ 일치 없음.` };
   }
 
-  // 웹 페이지 텍스트 읽기(태그 제거). 폐쇄망이면 네트워크 오류를 정중히 반환.
+  // 웹 페이지 텍스트 읽기(태그 제거). 폐쇄망이면 원인(describeNetError)을 진단해서 알려준다.
   async webFetch(url) {
     if (!/^https?:\/\//i.test(url || "")) throw new ToolError("http(s) URL 이 필요합니다.");
     const ctrl = new AbortController();
@@ -404,7 +408,7 @@ export class Toolbox {
     try {
       res = await fetch(url, { signal: ctrl.signal, headers: { "user-agent": "cdsa-harness" } });
     } catch (e) {
-      throw new ToolError(`웹 요청 실패: ${e.message} (폐쇄망일 수 있음)`);
+      throw new ToolError(describeNetError(e, "webfetch", 10000, url));
     } finally { clearTimeout(timer); }
     if (!res.ok) throw new ToolError(`HTTP ${res.status}`);
     let text = await res.text();
@@ -414,6 +418,73 @@ export class Toolbox {
       .replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
     if (text.length > 8000) text = text.slice(0, 8000) + "\n... (이후 생략)";
     return { ok: true, output: `[${url}]\n${text || "(본문 없음)"}` };
+  }
+
+  // 웹 검색 — DuckDuckGo lite/html → Bing 폴백. API 키 불필요.
+  async webSearch(query) {
+    if (!query || !query.trim()) throw new ToolError("검색어가 비어 있습니다.");
+    const strip = (s) => s.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#x27;/g, "'").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
+    let lastErr = null;
+    const get = async (u) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10000);
+      try {
+        const res = await fetch(u, { signal: ctrl.signal, headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" } });
+        return res.ok ? await res.text() : null;
+      } catch (e) { lastErr = e; return null; } finally { clearTimeout(timer); }
+    };
+    const results = [];
+    for (const base of ["https://html.duckduckgo.com/html/?q=", "https://lite.duckduckgo.com/lite/?q="]) {
+      if (results.length) break;
+      const html = await get(base + encodeURIComponent(query));
+      if (!html) continue;
+      const linkRe = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+      let m;
+      while ((m = linkRe.exec(html)) !== null && results.length < 6) {
+        let url = m[1];
+        const uddg = /uddg=([^&]+)/.exec(url);
+        if (uddg) try { url = decodeURIComponent(uddg[1]); } catch { /* */ }
+        results.push(`${results.length + 1}. ${strip(m[2])}\n   ${url}`);
+      }
+    }
+    if (!results.length) {
+      const html = await get("https://www.bing.com/search?q=" + encodeURIComponent(query));
+      if (html) {
+        const re = /<li class="b_algo"[\s\S]*?<h2>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+        let m;
+        while ((m = re.exec(html)) !== null && results.length < 6) {
+          results.push(`${results.length + 1}. ${strip(m[2])}\n   ${m[1]}`);
+        }
+      }
+    }
+    if (!results.length) {
+      const reason = lastErr ? describeNetError(lastErr, "websearch", 10000) : "검색 엔진이 결과를 막았을 수 있습니다";
+      throw new ToolError(`검색 결과를 가져오지 못했습니다 — ${reason}\n  ↳ webfetch 로 URL 직접 읽기를 시도하세요.`);
+    }
+    return { ok: true, output: `[웹 검색: ${query}]\n` + results.join("\n") };
+  }
+
+  // 코드 진단(LSP-라이트): 사용 가능한 검사기로 구문 오류를 찾는다. 의존성 0.
+  lspDiagnostics(rel) {
+    const target = this._resolve(rel);
+    if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new ToolError(`파일이 없습니다: ${rel}`);
+    const ext = path.extname(target).toLowerCase();
+    const run = (cmd) => {
+      try {
+        execSync(cmd, { encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"] });
+        return null;
+      } catch (e) {
+        return ((e.stderr || "") + (e.stdout || "")).trim().slice(0, 1500) || String(e.message);
+      }
+    };
+    let err = null;
+    if ([".js", ".mjs", ".cjs"].includes(ext)) err = run(`node --check ${JSON.stringify(target)}`);
+    else if (ext === ".json") {
+      try { JSON.parse(fs.readFileSync(target, "utf8")); } catch (e) { err = e.message; }
+    } else if (ext === ".py") err = run(`python3 -m py_compile ${JSON.stringify(target)}`) ?? run(`python -m py_compile ${JSON.stringify(target)}`);
+    else if ([".yml", ".yaml"].includes(ext)) err = run(`python3 -c "import yaml,sys;yaml.safe_load(open(sys.argv[1]))" ${JSON.stringify(target)}`);
+    else return { ok: true, output: `(${ext || "확장자 없음"} 은 진단기 미지원 — js/mjs/json/py/yaml 지원)` };
+    return { ok: true, output: err ? `❌ ${this.rel(target)} 진단 오류:\n${err}` : `✅ ${this.rel(target)} — 구문 이상 없음` };
   }
 
   runShell(command) {
@@ -449,6 +520,8 @@ export class Toolbox {
     if (name === "glob") return this.globFiles(args.pattern || "", args.path || ".");
     if (name === "grep") return this.grepFiles(args.pattern || "", args.path || ".", args.glob || "");
     if (name === "webfetch") return this.webFetch(args.url || "");
+    if (name === "websearch") return this.webSearch(args.query || "");
+    if (name === "lsp_diagnostics") return this.lspDiagnostics(args.path || "");
     if (name === "run_shell") return this.runShell(args.command || "");
     const plugin = this._pluginMap.get(name);
     if (plugin) {
@@ -609,6 +682,22 @@ export function toolSchemas(allowShell = false, plugins = []) {
       },
     },
     { type: "function", function: { name: "todo_read", description: "현재 할일 목록을 읽는다.", parameters: { type: "object", properties: {} } } },
+    {
+      type: "function",
+      function: {
+        name: "websearch",
+        description: "웹을 검색해 제목·URL·요약을 돌려준다(문서/자료 탐색). 사용자 승인 후 실행.",
+        parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "lsp_diagnostics",
+        description: "코드 파일의 구문 오류를 진단한다(js/mjs/json/py/yaml). 파일을 수정한 뒤 검증에 사용.",
+        parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+      },
+    },
     {
       type: "function",
       function: {

@@ -55,7 +55,7 @@ function clip(s, n) {
 // stream.active 는 onToken 과 공유하는 스트리밍 상태.
 function makePrinter(cfg, stream) {
   return (ev) => {
-    if (cfg.teach_mode) return printTeach(ev, stream);
+    if (cfg.teach_mode) return printTeach(ev, stream, cfg);
     return printCompact(ev, stream);
   };
 }
@@ -68,20 +68,32 @@ function replyMetaLine(d) {
   return meta.length ? meta.join(" · ") : "";
 }
 
-// ---- 교육(teach) 렌더: 내부 과정을 패널로 펼쳐 보여준다 ----
-function printTeach(ev, stream) {
+// ---- 교육(teach) 렌더 ----
+// 사용자 피드백: "시스템 프롬프트까지 나와서 복잡하다 — 지금 AI가 뭘 하는지(과정)와
+// AI가 실제로 낸 결과물을 명확히 구분해서 보고 싶다".
+// 그래서 기본은 '과정=회색 내레이션 한 줄, 결과물=색깔 있는 박스'로 단순화한다.
+// 메시지 목록·시스템 프롬프트 같은 상세 정보는 cfg.teach_verbose(=/teach 를 눌러 다음 단계로) 일 때만 편다.
+function narr(step, text) {
+  console.log(c.grey("│ ") + c.dim(step) + (text ? "  " + c.grey(text) : ""));
+}
+
+function printTeach(ev, stream, cfg) {
   const d = ev.data || {};
+  const verbose = Boolean(cfg && cfg.teach_verbose);
   switch (ev.step) {
     case Step.USER_INPUT:
-      console.log(`${c.cyan("🧑 ①")} ${c.bold("사용자 입력")}  ${c.grey(clip(ev.detail, 200))}`);
+      console.log(c.cyan("● 나 ▸ ") + c.bold(clip(ev.detail, 300)));
       return;
 
     case Step.BUILD_CONTEXT:
-      console.log(`${c.grey("🧱")} ${c.dim(ev.detail)}`);
+      narr("① 컨텍스트를 꾸립니다", "지시 + 규칙(AGENT.md) + 폴더 상황을 한 묶음으로");
       return;
 
     case Step.MODEL_CALL: {
-      // 실제 값은 흰색, 초보자용 설명(←)은 노란색으로 구분해 가독성을 높인다.
+      const round = d.iteration > 1 ? `루프 ${d.iteration}회차 · ` : "";
+      narr("② AI에게 물어봅니다", `${round}${d.provider}·${d.model} 에게 메시지 ${d.messages?.length || 0}개(≈${d.estTokens}토큰) 전송`);
+      if (!verbose) return;
+      // 상세 모드: 메시지 목록 + 시스템 프롬프트까지 펼친다(초보자용 노란 설명 포함).
       const why = (t) => c.yellow(`← ${t}`);
       const ROLE_DESC = {
         system: "하네스가 자동으로 넣는 규칙·정체성·작업폴더 안내문",
@@ -90,78 +102,65 @@ function printTeach(ev, stream) {
         tool: "도구 실행 결과 — 모델에게 되돌려주는 값",
       };
       const lines = [];
-      lines.push(`${c.grey("provider/model")}  ${c.white(c.bold(`${d.provider} · ${d.model}`))}  ${why("어느 회사의 어떤 모델을 호출하는지")}`);
-      lines.push(`${c.white(`모델에 보내는 메시지 ${d.messages?.length || 0}개 · 추정 ${d.estTokens} 토큰 · ${d.totalChars}자`)}`);
-      lines.push(`  ${why("모델은 기억이 없어서, 지금까지의 대화 전체를 매번 처음부터 다시 보냅니다")}`);
+      lines.push(`${c.white(`모델에 보내는 메시지 ${d.messages?.length || 0}개 · 추정 ${d.estTokens} 토큰 · ${d.totalChars}자`)}  ${why("모델은 기억이 없어서, 지금까지의 대화 전체를 매번 처음부터 다시 보냅니다")}`);
       for (const m of d.messages || []) {
         const roleColor = m.role === "system" ? c.magenta : m.role === "user" ? c.cyan : m.role === "assistant" ? c.green : c.yellow;
-        const desc = ROLE_DESC[m.role]
-          ? `  ${why(ROLE_DESC[m.role] + (m.extra && m.role === "assistant" ? " (도구를 써달라는 요청 포함)" : ""))}`
-          : "";
+        const desc = ROLE_DESC[m.role] ? `  ${why(ROLE_DESC[m.role] + (m.extra && m.role === "assistant" ? " (도구를 써달라는 요청 포함)" : ""))}` : "";
         lines.push(`  ${roleColor(m.role.padEnd(9))} ${c.white(`${m.chars}자${m.extra || ""}`)}${desc}`);
       }
-      lines.push(`${c.white(`제공 도구(${d.tools?.length || 0})`)}${c.grey(`: ${(d.tools || []).join(", ")}`)}`);
-      lines.push(`  ${why("모델이 쓸 수 있는 '손'(함수) 목록 — 모델이 이름과 인자로 요청하면 하네스가 대신 실행")}`);
-      console.log(panel(lines, { title: `${d.sub ? "┆ " : ""}🧠 ② LLM 호출 — 반복 ${d.iteration}`, color: "magenta" }));
+      lines.push(`${c.white(`제공 도구(${d.tools?.length || 0})`)}${c.grey(`: ${(d.tools || []).join(", ")}`)}  ${why("모델이 쓸 수 있는 '손'(함수) 목록")}`);
+      console.log(panel(lines, { title: `${d.sub ? "┆ " : ""}상세 — LLM 호출 (반복 ${d.iteration})`, color: "magenta" }));
       if (d.systemPrompt && !d.sub) {
-        console.log(panel(clip(d.systemPrompt, 600).split("\n"), {
-          title: "📜 시스템 프롬프트 (규칙+폴더가 여기 주입됨)",
-          color: "grey",
-        }));
+        console.log(panel(clip(d.systemPrompt, 700).split("\n"), { title: "📜 시스템 프롬프트", color: "grey" }));
       }
       return;
     }
 
     case Step.MODEL_REPLY: {
-      // 스트리밍으로 이미 본문이 출력된 경우: 줄바꿈 후 메타/도구호출만 덧붙인다.
-      if (d.streamed) {
-        if (stream && stream.active) {
-          process.stdout.write("\n");
-          stream.active = false;
-        }
-        for (const tc of d.toolCalls || []) {
-          console.log(c.yellow(`  ↳ 도구 호출 요청: ${c.bold(tc.name)}(${clip(JSON.stringify(tc.args), 200)})`));
-        }
-        const meta = replyMetaLine(d);
-        if (meta) console.log(c.grey("  ─ " + meta));
-        return;
+      // 스트리밍이면 본문은 이미 흘렀으니 줄바꿈만 정리
+      if (d.streamed && stream && stream.active) { process.stdout.write("\n"); stream.active = false; }
+      const hasText = ev.detail && ev.detail !== "(텍스트 없음)";
+      const acting = (d.toolCalls || []).length > 0;
+      // AI 가 낸 '말'(생각/설명/최종답) — 초록 박스로 명확히 구분. 스트리밍으로 이미 나왔으면 생략.
+      if (hasText && !d.streamed) {
+        console.log(panel(renderMarkdown(clip(ev.detail, 1400)), { title: acting ? "🤖 AI 의 생각" : "🤖 AI 의 답", color: "green" }));
       }
-      const lines = [];
-      if (ev.detail && ev.detail !== "(텍스트 없음)") lines.push(...renderMarkdown(clip(ev.detail, 1200)));
+      // 도구를 쓰겠다는 '의도'는 내레이션 한 줄로
       for (const tc of d.toolCalls || []) {
-        lines.push(c.yellow(`↳ 도구 호출 요청: ${c.bold(tc.name)}(${clip(JSON.stringify(tc.args), 200)})`));
+        narr("③ AI가 도구를 쓰기로 합니다", `${tc.name}(${clip(JSON.stringify(tc.args), 100)})`);
       }
       const meta = replyMetaLine(d);
-      if (meta) lines.push(c.grey("─ " + meta));
-      else lines.push(c.dim("(mock: 토큰/지연 측정 없음)"));
-      console.log(panel(lines.length ? lines : ["(빈 응답)"], { title: `${d.sub ? "┆ " : ""}🤖 ③ 모델 응답 (원본 판단)`, color: "green" }));
+      if (meta) console.log(c.grey("│    ") + c.dim(meta));
       return;
     }
 
     case Step.TOOL_DECISION:
-      console.log(`${c.yellow("🤔 ④")} ${c.bold("도구 판단")}  ${c.grey(clip(ev.detail, 200))}`);
-      return;
+      return; // ③ 에서 이미 내레이션했다 — 중복 표시 안 함
 
     case Step.TOOL_RUN:
-      console.log(`${c.blue("🔧 ⑤")} ${c.bold(ev.title)}  ${c.grey(clip(ev.detail, 200))}`);
+      narr("④ 하네스가 실행합니다", `${ev.title.replace(/^도구 실행: /, "")} — ${clip(ev.detail, 120)}`);
       return;
 
-    case Step.TOOL_RESULT:
-      console.log(panel(clip(ev.detail, 1500).split("\n"), { title: `📄 ${ev.title}`, color: "grey" }));
+    case Step.TOOL_RESULT: {
+      // 도구 '결과물'은 회색 박스 — 사실 데이터이지 AI 의 생각이 아니라는 걸 색으로 구분
+      const cap = verbose ? 2000 : 500;
+      const body = clip(ev.detail, cap).split("\n").slice(0, verbose ? 40 : 12);
+      console.log(panel(body.map((l) => c.grey(l)), { title: `📤 ${ev.title.replace(/^결과 반영: /, "")} 결과(사실 데이터)`, color: "grey" }));
       return;
+    }
 
     case Step.FEEDBACK:
-      console.log(`${c.grey("↩️  ⑥ 결과 되먹임")}  ${c.dim(clip(ev.detail, 200))}`);
-      console.log(c.dim("   └ 도구 결과가 컨텍스트에 더해진 채로 ②부터 다시 — 이 반복이 'Agent Loop' 입니다."));
+      narr("⑤ 결과를 AI에게 되돌려줍니다", "이 사실을 붙여서 다시 ②로 — 이 반복이 '에이전트 루프'");
+      console.log(c.grey("│"));
       return;
 
     case Step.APPROVAL:
-      if (ev.title.includes("자동 승인")) console.log(`${c.yellow("🔓")} ${c.dim(ev.title)}`);
+      if (ev.title.includes("자동 승인")) narr("🔓 자동 승인", "");
       return;
 
     case Step.DONE:
-      if (d.sub) { console.log(c.grey("┆ ") + c.green("✅ 서브에이전트 완료")); return; }
-      console.log(panel(renderMarkdown(ev.detail || "완료"), { title: "✅ 완료", color: "green" }));
+      if (d.sub) { console.log(c.grey("┆ ") + c.green("· 서브에이전트 완료")); return; }
+      console.log(panel(renderMarkdown(ev.detail || "완료"), { title: "✅ 최종 결과물 (AI 가 사용자에게 주는 답)", color: "green" }));
       return;
 
     case Step.ERROR:
@@ -1268,8 +1267,12 @@ export async function main(argv = []) {
       continue;
     }
     if (low === "/teach") {
-      cfg.teach_mode = !cfg.teach_mode;
-      console.log(c.green(`교육 모드 ${cfg.teach_mode ? "ON" : "OFF"}.`));
+      // 3단계 순환: OFF → ON(간결 내레이션, 기본) → 상세(메시지목록+시스템프롬프트) → OFF
+      if (!cfg.teach_mode) { cfg.teach_mode = true; cfg.teach_verbose = false; }
+      else if (!cfg.teach_verbose) { cfg.teach_verbose = true; }
+      else { cfg.teach_mode = false; cfg.teach_verbose = false; }
+      const label = !cfg.teach_mode ? "OFF" : cfg.teach_verbose ? "상세(ON+verbose)" : "ON(간결)";
+      console.log(c.green(`교육 모드 ${label}.`) + c.dim("  (다시 누르면 다음 단계로)"));
       continue;
     }
     if (low === "/stream") {

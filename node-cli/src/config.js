@@ -41,6 +41,7 @@ const DEFAULTS = {
   temperature: 0.2,
   max_tokens: 1024,
   teach_mode: true,
+  teach_verbose: false, // true 면 메시지 목록·시스템 프롬프트까지 펼침(/teach 로 순환 전환)
   stream: true, // 모델 응답을 실시간(토큰 단위)으로 출력
   import_foreign_skills: true, // .claude/commands 등 외부 포맷 스킬도 읽기(프로젝트+전역)
   skill_dirs: [], // 스킬을 추가로 읽어올 폴더(절대/상대 경로)

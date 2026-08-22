@@ -346,7 +346,7 @@ export class AgentLoop {
     if (this.mode === "plan" && (this.toolbox.isMutating(name) || name === "run_shell")) return "deny";
     const p = (this.config.permissions || {})[name];
     if (p === "allow" || p === "ask" || p === "deny") return p;
-    if (this.toolbox.isMutating(name) || name === "webfetch") return "ask";
+    if (this.toolbox.isMutating(name) || name === "webfetch" || name === "websearch") return "ask";
     return "allow";
   }
 
@@ -427,6 +427,9 @@ export class AgentLoop {
     }
     if (tc.name === "webfetch") {
       return { toolName: "webfetch", toolLabel: TOOL_LABELS.webfetch, args: tc.args, command: `GET ${tc.args.url || ""}` };
+    }
+    if (tc.name === "websearch") {
+      return { toolName: "webfetch", toolLabel: TOOL_LABELS.websearch, args: tc.args, command: `SEARCH ${tc.args.query || ""}` };
     }
     if (tc.name === "run_shell") {
       return {
